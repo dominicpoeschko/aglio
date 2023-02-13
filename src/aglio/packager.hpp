@@ -1,7 +1,7 @@
 #pragma once
 
-#include "aglio/serializer.hpp"
-#include "aglio/serialization_buffers.hpp"
+#include "serialization_buffers.hpp"
+#include "serializer.hpp"
 
 #include <functional>
 #include <optional>
@@ -12,9 +12,9 @@ namespace detail {
     template<typename Serializer, typename Config>
     struct PackagerWithSize {
         template<typename T, typename Buffer>
-        static bool pack(Buffer& buffer, T const& v) {
+        static constexpr bool pack(Buffer& buffer, T const& v) {
             aglio::DynamicSerializationView sebuff{buffer};
-            typename Config::Size_t           size{};
+            typename Config::Size_t         size{};
             if(!Serializer::serialize(sebuff, size, v)) {
                 return false;
             }
@@ -28,24 +28,34 @@ namespace detail {
         }
 
         template<typename T, typename Buffer>
-        static std::optional<T> unpack(Buffer& buffer) {
-            typename Config::Size_t             size;
+        static constexpr std::optional<T> unpack(Buffer& buffer) {
+            std::optional<T>                  packet;
+            typename Config::Size_t           size;
             aglio::DynamicDeserializationView debuff{buffer};
             if(!Serializer::deserialize(debuff, size)) {
-                return {};
+                return packet;
             }
 
             if(size > buffer.size()) {
-                return {};
+                return packet;
             }
 
-            T package;
-            if(!Serializer::deserialize(debuff, package)) {
-                buffer.erase(buffer.begin(), std::next(buffer.begin(), size));
-                return {};
+            packet.emplace();
+            if(!Serializer::deserialize(debuff, *packet)) {
+                buffer.erase(
+                  buffer.begin(),
+                  std::next(
+                    buffer.begin(),
+                    static_cast<std::make_signed_t<typename Config::Size_t>>(size)));
+                packet.reset();
+                return packet;
             }
-            buffer.erase(buffer.begin(), std::next(buffer.begin(), size));
-            return package;
+            buffer.erase(
+              buffer.begin(),
+              std::next(
+                buffer.begin(),
+                static_cast<std::make_signed_t<typename Config::Size_t>>(size)));
+            return packet;
         }
     };
     template<typename Serializer, typename Config>
@@ -53,11 +63,15 @@ namespace detail {
         static_assert(
           std::is_trivial_v<decltype(Config::PackageStart)>,
           "start needs to by trivial");
+        static_assert(std::is_trivial_v<typename Config::Crc::type>, "crc needs to by trivial");
+        static_assert(std::is_trivial_v<typename Config::Size_t>, "size needs to by trivial");
 
         static constexpr std::size_t StartSize = sizeof(decltype(Config::PackageStart));
+        static constexpr std::size_t CrcSize   = sizeof(typename Config::Crc::type);
+        static constexpr std::size_t SizeSize  = sizeof(typename Config::Size_t);
 
         template<typename T, typename Buffer>
-        static bool pack(Buffer& buffer, T const& v) {
+        static constexpr bool pack(Buffer& buffer, T const& v) {
             aglio::DynamicSerializationView sebuff{buffer};
 
             typename Config::Size_t size{};
@@ -70,8 +84,8 @@ namespace detail {
             if(!Serializer::serialize(tmp, Config::PackageStart, size)) {
                 return false;
             }
-            typename Config::Crc::type const crc
-              = Config::Crc::calc(buffer.begin(), std::next(buffer.begin(), size + StartSize));
+            typename Config::Crc::type const crc = Config::Crc::calc(std::as_bytes(
+              std::span{buffer.begin(), std::next(buffer.begin(), size + StartSize)}));
             if(!Serializer::serialize(sebuff, crc)) {
                 return false;
             }
@@ -80,17 +94,17 @@ namespace detail {
         }
 
         template<typename T, typename Buffer>
-        static std::optional<T> unpack(Buffer& buffer) {
+        static constexpr std::optional<T> unpack(Buffer& buffer) {
+            std::optional<T> packet;
             while(true) {
-                if(
-                  sizeof(decltype(Config::PackageStart)) + sizeof(typename Config::Size_t)
-                  > buffer.size()) {
-                    return {};
+                packet.reset();
+                if((StartSize + SizeSize) > buffer.size()) {
+                    return packet;
                 }
 
                 std::remove_cv_t<decltype(Config::PackageStart)> start;
                 typename Config::Size_t                          size;
-                aglio::DynamicDeserializationView              debuff{buffer};
+                aglio::DynamicDeserializationView                debuff{buffer};
                 if(!Serializer::deserialize(debuff, start, size)) {
                     buffer.erase(buffer.begin());
                     continue;
@@ -106,26 +120,47 @@ namespace detail {
                     continue;
                 }
 
-                static constexpr std::size_t ExtraSize
-                  = sizeof(typename Config::Crc::type) + StartSize;
+                constexpr std::size_t ExtraSize = CrcSize + StartSize;
 
                 if(size + ExtraSize > buffer.size()) {
-                    return {};
+                    return packet;
                 }
-                T                          packet;
+
+                std::size_t const packet_size = size - SizeSize;
+
+                debuff.skip(packet_size);
                 typename Config::Crc::type crc;
-                if(!Serializer::deserialize(debuff, packet, crc)) {
+                if(!Serializer::deserialize(debuff, crc)) {
                     buffer.erase(buffer.begin());
                     continue;
                 }
 
                 typename Config::Crc::type const calcedCrc
-                  = Config::Crc::calc(buffer.begin(), std::next(buffer.begin(), size + StartSize));
+                  = Config::Crc::calc(std::as_bytes(std::span{
+                    buffer.begin(),
+                    std::next(
+                      buffer.begin(),
+                      static_cast<std::make_signed_t<std::size_t>>(size + StartSize))}));
 
                 if(calcedCrc != crc) {
                     buffer.erase(buffer.begin());
                     continue;
                 }
+
+                debuff.unskip(packet_size + CrcSize);
+                packet.emplace();
+
+                typename Config::Crc::type crc2;
+                if(!Serializer::deserialize(debuff, *packet, crc2)) {
+                    buffer.erase(buffer.begin());
+                    continue;
+                }
+
+                if(calcedCrc != crc2) {
+                    buffer.erase(buffer.begin());
+                    continue;
+                }
+
                 buffer.erase(buffer.begin(), std::next(buffer.begin(), size + ExtraSize));
                 return packet;
             }

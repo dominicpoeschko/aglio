@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string_view>
 
 namespace aglio {
@@ -34,14 +35,28 @@ struct MemberDescriptor {
 
 template<typename... MemberDescriptors>
 struct MemberList : detail::MemberListTag {
+    static constexpr std::size_t N_Members{sizeof...(MemberDescriptors)};
     template<typename T, typename F>
     constexpr static auto member_apply([[maybe_unused]] F f, T& type) {
-        return f(type.*MemberDescriptors::MemberPointer...);
+        return std::invoke(f, type.*MemberDescriptors::MemberPointer...);
     }
 
     template<typename T, typename F>
     constexpr static auto member_apply_named([[maybe_unused]] F f, T& type) {
-        return f(std::tie(type.*MemberDescriptors::MemberPointer, MemberDescriptors::Name)...);
+        return std::invoke(
+          f,
+          std::tie(MemberDescriptors::Name, type.*MemberDescriptors::MemberPointer)...);
+    }
+
+    template<typename T>
+    constexpr static auto get_member_tuple(T& type) {
+        return std::tie(type.*MemberDescriptors::MemberPointer...);
+    }
+
+    template<typename T>
+    constexpr static auto get_member_named_tuple(T& type) {
+        return std::make_tuple(
+          std::tie(MemberDescriptors::Name, type.*MemberDescriptors::MemberPointer)...);
     }
 };
 
@@ -60,6 +75,43 @@ namespace detail {
           Empty<struct A>,
           BaseClassList<>>
       , std::conditional_t<std::is_base_of_v<MemberListTag, TDGen>, Empty<struct B>, MemberList<>> {
+        using base_base
+          = std::conditional_t<std::is_base_of_v<BaseClassListTag, TDGen>, TDGen, BaseClassList<>>;
+
+        using member_base
+          = std::conditional_t<std::is_base_of_v<MemberListTag, TDGen>, TDGen, MemberList<>>;
+
+        template<typename T, typename F>
+        constexpr static auto apply([[maybe_unused]] F f, T& type) {
+            return std::apply(
+              f,
+              std::tuple_cat(
+                base_base::get_base_class_tuple(type),
+                member_base::get_member_tuple(type)));
+        }
+
+        template<typename T, typename F>
+        constexpr static auto apply_named([[maybe_unused]] F f, T& type) {
+            return std::apply(
+              f,
+              std::tuple_cat(
+                base_base::get_base_class_named_tuple(type),
+                member_base::get_member_named_tuple(type)));
+        }
+
+        template<typename T>
+        constexpr static auto get_tuple(T& type) {
+            return std::tuple_cat(
+              base_base::get_base_class_tuple(type),
+              member_base::get_member_tuple(type));
+        }
+
+        template<typename T>
+        constexpr static auto get_named_tuple(T& type) {
+            return std::tuple_cat(
+              base_base::get_base_class_named_tuple(type),
+              member_base::get_member_named_tuple(type));
+        }
     };
 }   // namespace detail
 template<typename T>
@@ -67,25 +119,52 @@ using TypeDescriptor = detail::TypeDescriptorImpl<TypeDescriptorGen<T>>;
 
 template<typename... BaseClasses>
 struct BaseClassList : detail::BaseClassListTag {
+    static constexpr std::size_t N_BaseClasses{sizeof...(BaseClasses)};
     template<typename T, typename F>
     constexpr static auto base_class_apply([[maybe_unused]] F f, T& child) {
-        return f(
+        return std::invoke(
+          f,
           static_cast<std::conditional_t<std::is_const_v<T>, BaseClasses const&, BaseClasses&>>(
             child)...);
     }
 
     template<typename T, typename F>
     constexpr static auto base_class_apply_named([[maybe_unused]] F f, T& child) {
-        auto named = [](auto& base) {
+        [[maybe_unused]] auto named = [](auto& base) {
             using Base = std::remove_cvref_t<decltype(base)>;
             if constexpr(requires { TypeDescriptor<Base>{}; }) {
-                return std::tie(base, TypeDescriptor<Base>::Name);
+                return std::tie(TypeDescriptor<Base>::Name, base);
             } else {
                 constexpr std::string_view empty{};
-                return std::tie(base, empty);
+                return std::tie(empty, base);
             }
         };
-        return f(named(
+        return std::invoke(
+          f,
+          named(
+            static_cast<std::conditional_t<std::is_const_v<T>, BaseClasses const&, BaseClasses&>>(
+              child))...);
+    }
+
+    template<typename T>
+    constexpr static auto get_base_class_tuple(T& child) {
+        return std::tie(
+          static_cast<std::conditional_t<std::is_const_v<T>, BaseClasses const&, BaseClasses&>>(
+            child)...);
+    }
+
+    template<typename T>
+    constexpr static auto get_base_class_named_tuple(T& child) {
+        [[maybe_unused]] auto named = [](auto& base) {
+            using Base = std::remove_cvref_t<decltype(base)>;
+            if constexpr(requires { TypeDescriptor<Base>{}; }) {
+                return std::tie(TypeDescriptor<Base>::Name, base);
+            } else {
+                constexpr std::string_view empty{};
+                return std::tie(empty, base);
+            }
+        };
+        return std::make_tuple(named(
           static_cast<std::conditional_t<std::is_const_v<T>, BaseClasses const&, BaseClasses&>>(
             child))...);
     }
