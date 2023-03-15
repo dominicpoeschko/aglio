@@ -26,7 +26,7 @@ struct adl_serializer<T> {
             [[maybe_unused]] auto call = [&](auto const&... name_values) {
                 [[maybe_unused]] auto subcall = [&](auto const& name_value) {
                     auto const& [name, value] = name_value;
-                    if constexpr(requires { value.has_value(); }) {
+                    if constexpr(requires { std::get<1>(name_value).has_value(); }) {
                         //optional
                         if(value.has_value()) {
                             j[std::string{name}] = value;
@@ -50,7 +50,7 @@ struct adl_serializer<T> {
         [[maybe_unused]] auto call = [&](auto const&... name_values) {
             [[maybe_unused]] auto subcall = [&](auto& name_value) {
                 auto& [name, value] = name_value;
-                if constexpr(requires { value.has_value(); }) {
+                if constexpr(requires { std::get<1>(name_value).has_value(); }) {
                     //optional
                     if(j.count(std::string(name)) != 0) {
                         j.at(std::string{name}).get_to(value);
@@ -306,75 +306,76 @@ namespace detail {
 
     template<typename Buffer, typename T>
         requires requires {
-            {
-                std::tuple_size<T>::value
-                } -> std::convertible_to<std::size_t>;
-        } &&(!std::ranges::range<T>)constexpr void to_json_impl(Buffer& buffer, T const& v) {
-            Array array{buffer};
+                     {
+                         std::tuple_size<T>::value
+                         } -> std::convertible_to<std::size_t>;
+                 } && (!std::ranges::range<T>)
+    constexpr void to_json_impl(Buffer& buffer, T const& v) {
+        Array array{buffer};
 
-            auto action = [&](auto const& vv) {
-                ++array;
-                to_json(buffer, vv);
+        auto action = [&](auto const& vv) {
+            ++array;
+            to_json(buffer, vv);
+        };
+
+        return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            using std::get;
+            return (action(get<Is>(v)), ...);
+        }
+        (std::make_index_sequence<std::tuple_size_v<T>>{});
+    }
+
+    template<typename Buffer, typename Rep, typename Period>
+    constexpr void to_json_impl(Buffer& buffer, std::chrono::duration<Rep, Period> const& v) {
+        to_json(buffer, v.count());
+    }
+    template<typename Buffer>
+    constexpr void to_json_impl(Buffer& buffer, std::byte v) {
+        to_json(buffer, std::to_integer<std::uint8_t>(v));
+    }
+    template<typename Buffer>
+    constexpr void to_json_impl(Buffer& buffer, bool v) {
+        append(buffer, v ? "true" : "false");
+    }
+    template<typename Buffer, std::integral T>
+    constexpr void to_json_impl(Buffer& buffer, T const& v) {
+        auto const [a, n] = to_string_array(v);
+        append(buffer, std::string_view{a.data(), n});
+    }
+    template<typename Buffer, std::floating_point T>
+    constexpr void to_json_impl(Buffer& buffer, T const& v) {
+        auto const [a, n] = to_string_array(v);
+        append(buffer, std::string_view{a.data(), n});
+    }
+
+    template<typename Buffer, aglio::Described T>
+    constexpr void to_json_impl(Buffer& buffer, T const& v) {
+        using td = aglio::TypeDescriptor<T>;
+
+        Object obj{buffer};
+
+        auto call = [&](auto const&... name_values) {
+            [[maybe_unused]] auto subcall = [&](auto const& name_value) {
+                auto const& [name, value] = name_value;
+                ++obj;
+                named(buffer, name, value);
             };
+            (subcall(name_values), ...);
+        };
 
-            return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                using std::get;
-                return (action(get<Is>(v)), ...);
-            }
-            (std::make_index_sequence<std::tuple_size_v<T>>{});
-        }
+        td::apply_named(call, v);
+    }
+    template<typename Buffer, typename T>
+    constexpr void to_json(Buffer& buffer, T const& v) {
+        to_json_impl(buffer, v);
+    }
 
-        template<typename Buffer, typename Rep, typename Period>
-        constexpr void to_json_impl(Buffer& buffer, std::chrono::duration<Rep, Period> const& v) {
-            to_json(buffer, v.count());
-        }
-        template<typename Buffer>
-        constexpr void to_json_impl(Buffer& buffer, std::byte v) {
-            to_json(buffer, std::to_integer<std::uint8_t>(v));
-        }
-        template<typename Buffer>
-        constexpr void to_json_impl(Buffer& buffer, bool v) {
-            append(buffer, v ? "true" : "false");
-        }
-        template<typename Buffer, std::integral T>
-        constexpr void to_json_impl(Buffer& buffer, T const& v) {
-            auto const [a, n] = to_string_array(v);
-            append(buffer, std::string_view{a.data(), n});
-        }
-        template<typename Buffer, std::floating_point T>
-        constexpr void to_json_impl(Buffer& buffer, T const& v) {
-            auto const [a, n] = to_string_array(v);
-            append(buffer, std::string_view{a.data(), n});
-        }
-
-        template<typename Buffer, aglio::Described T>
-        constexpr void to_json_impl(Buffer& buffer, T const& v) {
-            using td = aglio::TypeDescriptor<T>;
-
-            Object obj{buffer};
-
-            auto call = [&](auto const&... name_values) {
-                [[maybe_unused]] auto subcall = [&](auto const& name_value) {
-                    auto const& [name, value] = name_value;
-                    ++obj;
-                    named(buffer, name, value);
-                };
-                (subcall(name_values), ...);
-            };
-
-            td::apply_named(call, v);
-        }
-        template<typename Buffer, typename T>
-        constexpr void to_json(Buffer& buffer, T const& v) {
-            to_json_impl(buffer, v);
-        }
-
-        template<typename Buffer, typename T>
-        constexpr void named(Buffer& buffer, std::string_view name, T const& v) {
-            to_json(buffer, name);
-            append(buffer, ':');
-            to_json(buffer, v);
-        }
+    template<typename Buffer, typename T>
+    constexpr void named(Buffer& buffer, std::string_view name, T const& v) {
+        to_json(buffer, name);
+        append(buffer, ':');
+        to_json(buffer, v);
+    }
 
 }   // namespace detail
 
