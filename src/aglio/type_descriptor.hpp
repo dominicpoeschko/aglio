@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <string_view>
+#include <tuple>
 
 namespace aglio {
 template<typename T>
