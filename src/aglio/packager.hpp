@@ -3,8 +3,10 @@
 #include "serialization_buffers.hpp"
 #include "serializer.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <optional>
+#include <span>
 
 namespace aglio {
 
@@ -55,6 +57,26 @@ namespace detail {
               std::next(
                 buffer.begin(),
                 static_cast<std::make_signed_t<typename Config::Size_t>>(size)));
+            return packet;
+        }
+        template<typename T>
+        static constexpr std::optional<T> unpack(std::span<std::byte const> buffer) {
+            std::optional<T>                  packet;
+            typename Config::Size_t           size;
+            aglio::DynamicDeserializationView debuff{buffer};
+            if(!Serializer::deserialize(debuff, size)) {
+                return packet;
+            }
+
+            if(size > buffer.size()) {
+                return packet;
+            }
+
+            packet.emplace();
+            if(!Serializer::deserialize(debuff, *packet)) {
+                packet.reset();
+                return packet;
+            }
             return packet;
         }
     };
