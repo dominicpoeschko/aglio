@@ -6,39 +6,17 @@
     #include <fmt/chrono.h>
     #include <fmt/format.h>
     #include <fmt/ranges.h>
-    #include <optional>
-    #include <variant>
-
-template<typename T>
-struct fmt::formatter<std::optional<T>> : fmt::formatter<T> {
-    template<typename FormatContext>
-    constexpr auto format(std::optional<T> const& opt, FormatContext& ctx) const {
-        if(opt) {
-            formatter<T>::format(*opt, ctx);
-            return ctx.out();
-        }
-        return format_to(ctx.out(), "()");
-    }
-};
-
-template<typename... Ts>
-struct fmt::formatter<std::variant<Ts...>> : fmt::dynamic_formatter<> {
-    constexpr auto format(std::variant<Ts...> const& v, format_context& ctx) const {
-        return std::visit(
-          [&](auto const& val) { return fmt::dynamic_formatter<>::format(val, ctx); },
-          v);
-    }
-};
+    #include <fmt/std.h>
 
 template<aglio::Described T>
 struct fmt::formatter<T> {
     template<typename ParseContext>
-    constexpr auto parse(ParseContext& ctx) {
+    constexpr auto parse(ParseContext& ctx) const {
         return ctx.begin();
     }
 
     template<typename FormatContext>
-    constexpr auto format(const T& v, FormatContext& ctx) -> decltype(ctx.out()) const {
+    constexpr auto format(T const& v, FormatContext& ctx) const -> decltype(ctx.out()) {
         using td = aglio::TypeDescriptor<T>;
 
         constexpr std::size_t argCount = td::N_BaseClasses + td::N_Members;
@@ -51,11 +29,11 @@ struct fmt::formatter<T> {
             [[maybe_unused]] auto sub_call = [&](auto const& name_value) {
                 auto const& [name, value] = name_value;
                 ++n;
+                std::string_view sep{", "};
                 if(n == argCount) {
-                    out = format_to(out, "\"{}\": {}", name, value);
-                } else {
-                    out = format_to(out, "\"{}\": {}, ", name, value);
+                    sep = "";
                 }
+                out = fmt::format_to(out, "\"{}\": {}{}", name, value, sep);
             };
             (sub_call(name_values), ...);
         };

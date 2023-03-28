@@ -38,14 +38,14 @@ template<typename... MemberDescriptors>
 struct MemberList : detail::MemberListTag {
     static constexpr std::size_t N_Members{sizeof...(MemberDescriptors)};
     template<typename T, typename F>
-    constexpr static auto member_apply([[maybe_unused]] F f, T& type) {
-        return std::invoke(f, type.*MemberDescriptors::MemberPointer...);
+    constexpr static auto member_apply([[maybe_unused]] F&& f, T& type) {
+        return std::invoke(std::forward<F>(f), type.*MemberDescriptors::MemberPointer...);
     }
 
     template<typename T, typename F>
-    constexpr static auto member_apply_named([[maybe_unused]] F f, T& type) {
+    constexpr static auto member_apply_named([[maybe_unused]] F&& f, T& type) {
         return std::invoke(
-          f,
+          std::forward<F>(f),
           std::tie(MemberDescriptors::Name, type.*MemberDescriptors::MemberPointer)...);
     }
 
@@ -83,18 +83,18 @@ namespace detail {
           = std::conditional_t<std::is_base_of_v<MemberListTag, TDGen>, TDGen, MemberList<>>;
 
         template<typename T, typename F>
-        constexpr static auto apply([[maybe_unused]] F f, T& type) {
+        constexpr static auto apply([[maybe_unused]] F&& f, T& type) {
             return std::apply(
-              f,
+              std::forward<F>(f),
               std::tuple_cat(
                 base_base::get_base_class_tuple(type),
                 member_base::get_member_tuple(type)));
         }
 
         template<typename T, typename F>
-        constexpr static auto apply_named([[maybe_unused]] F f, T& type) {
+        constexpr static auto apply_named([[maybe_unused]] F&& f, T& type) {
             return std::apply(
-              f,
+              std::forward<F>(f),
               std::tuple_cat(
                 base_base::get_base_class_named_tuple(type),
                 member_base::get_member_named_tuple(type)));
@@ -122,15 +122,15 @@ template<typename... BaseClasses>
 struct BaseClassList : detail::BaseClassListTag {
     static constexpr std::size_t N_BaseClasses{sizeof...(BaseClasses)};
     template<typename T, typename F>
-    constexpr static auto base_class_apply([[maybe_unused]] F f, T& child) {
+    constexpr static auto base_class_apply([[maybe_unused]] F&& f, T& child) {
         return std::invoke(
-          f,
+          std::forward<F>(f),
           static_cast<std::conditional_t<std::is_const_v<T>, BaseClasses const&, BaseClasses&>>(
             child)...);
     }
 
     template<typename T, typename F>
-    constexpr static auto base_class_apply_named([[maybe_unused]] F f, T& child) {
+    constexpr static auto base_class_apply_named([[maybe_unused]] F&& f, T& child) {
         [[maybe_unused]] auto named = [](auto& base) {
             using Base = std::remove_cvref_t<decltype(base)>;
             if constexpr(requires { TypeDescriptor<Base>{}; }) {
@@ -141,7 +141,7 @@ struct BaseClassList : detail::BaseClassListTag {
             }
         };
         return std::invoke(
-          f,
+          std::forward<F>(f),
           named(
             static_cast<std::conditional_t<std::is_const_v<T>, BaseClasses const&, BaseClasses&>>(
               child))...);
