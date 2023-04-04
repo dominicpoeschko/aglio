@@ -13,6 +13,21 @@ namespace aglio {
 namespace detail {
     template<typename Serializer, typename Config>
     struct PackagerWithSize {
+    private:
+        template<typename T>
+        static constexpr std::optional<T> unpack_impl(std::span<std::byte const> buffer) {
+            std::optional<T>                  packet;
+            aglio::DynamicDeserializationView debuff{buffer};
+
+            packet.emplace();
+            if(!Serializer::deserialize(debuff, *packet)) {
+                packet.reset();
+                return packet;
+            }
+            return packet;
+        }
+
+    public:
         template<typename T, typename Buffer>
         static constexpr bool pack(Buffer& buffer, T const& v) {
             aglio::DynamicSerializationView sebuff{buffer};
@@ -42,16 +57,7 @@ namespace detail {
                 return packet;
             }
 
-            packet.emplace();
-            if(!Serializer::deserialize(debuff, *packet)) {
-                buffer.erase(
-                  buffer.begin(),
-                  std::next(
-                    buffer.begin(),
-                    static_cast<std::make_signed_t<typename Config::Size_t>>(size)));
-                packet.reset();
-                return packet;
-            }
+            packet = unpack_impl<T>(debuff.span());
             buffer.erase(
               buffer.begin(),
               std::next(
@@ -72,11 +78,7 @@ namespace detail {
                 return packet;
             }
 
-            packet.emplace();
-            if(!Serializer::deserialize(debuff, *packet)) {
-                packet.reset();
-                return packet;
-            }
+            packet = unpack_impl<T>(debuff.span());
             return packet;
         }
     };

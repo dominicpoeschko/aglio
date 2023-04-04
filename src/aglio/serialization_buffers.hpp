@@ -54,6 +54,10 @@ public:
         return static_cast<std::size_t>(buffer_.size()) - position_;
     }
 
+    constexpr std::span<std::byte const> span() {
+        return std::as_bytes(std::span{buffer_.data() + position_, available()});
+    }
+
     constexpr bool extract(std::span<std::byte> data) {
         if(data.size_bytes() == 0) {
             return true;
