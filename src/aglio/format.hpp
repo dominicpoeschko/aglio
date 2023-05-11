@@ -22,7 +22,7 @@ struct fmt::formatter<T> {
         constexpr std::size_t argCount = td::N_BaseClasses + td::N_Members;
 
         auto out = ctx.out();
-        out      = format_to(out, "{}(", td::Name);
+        out      = fmt::format_to(out, "{}(", td::Name);
 
         std::size_t           n{};
         [[maybe_unused]] auto call = [&](auto const&... name_values) {
@@ -40,7 +40,7 @@ struct fmt::formatter<T> {
 
         td::apply_named(call, v);
 
-        return format_to(out, ")");
+        return fmt::format_to(out, ")");
     }
 };
 #endif
