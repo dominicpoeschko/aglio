@@ -24,11 +24,13 @@ struct remote_fmt::formatter<T> {
         };
         add("{}(");
 
-        for(std::size_t i = 0; i < Size - 1; ++i) {
-            add("{:m}, ");
-        }
-        if(Size != 0) {
-            add("{:m}");
+        if(Size != 0){
+            for(std::size_t i = 0; i < Size - 1; ++i) {
+                add("{:m}, ");
+            }
+            if(Size != 0) {
+                add("{:m}");
+            }
         }
 
         add(")");
