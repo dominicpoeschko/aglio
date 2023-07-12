@@ -73,4 +73,25 @@ public:
 
 template<typename Buffer>
 DynamicDeserializationView(Buffer&) -> DynamicDeserializationView<Buffer>;
+
+template<typename Stream>
+struct StreamSerializationView {
+private:
+    Stream& stream_;
+
+public:
+    constexpr explicit StreamSerializationView(Stream& stream) : stream_{stream} {}
+
+    constexpr bool insert(std::span<std::byte const> data) {
+        if(data.size_bytes() == 0) {
+            return true;
+        }
+        stream_.write(reinterpret_cast<char const*>(data.data()), data.size_bytes());
+        return true;
+    }
+};
+
+template<typename Stream>
+StreamSerializationView(Stream&) -> StreamSerializationView<Stream>;
+
 }   // namespace aglio
