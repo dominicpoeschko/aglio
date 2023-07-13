@@ -87,11 +87,35 @@ public:
             return true;
         }
         stream_.write(reinterpret_cast<char const*>(data.data()), data.size_bytes());
-        return true;
+        return !stream_.fail();
     }
 };
 
 template<typename Stream>
 StreamSerializationView(Stream&) -> StreamSerializationView<Stream>;
+
+template<typename Stream>
+struct StreamDeserializationView {
+private:
+    Stream& stream_;
+
+public:
+    constexpr explicit StreamDeserializationView(Stream& stream) : stream_{stream} {}
+
+    constexpr std::size_t size() const { return std::numeric_limits<std::size_t>::max(); }
+
+    constexpr bool extract(std::span<std::byte> data) {
+        if(data.size_bytes() == 0) {
+            return true;
+        }
+
+        stream_.read(reinterpret_cast<char*>(data.data()), data.size_bytes());
+
+        return !stream_.fail();
+    }
+};
+
+template<typename Stream>
+StreamDeserializationView(Stream&) -> StreamDeserializationView<Stream>;
 
 }   // namespace aglio
