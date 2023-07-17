@@ -24,8 +24,12 @@ public:
         }
         auto available = [&]() { return static_cast<std::size_t>(buffer_.size()) - position_; };
         if(data.size_bytes() > available()) {
-            buffer_.resize(static_cast<decltype(buffer_.size())>(
-              static_cast<std::size_t>(buffer_.size()) + (data.size_bytes() - available())));
+            if constexpr(requires { buffer_.resize(1); }) {
+                buffer_.resize(static_cast<decltype(buffer_.size())>(
+                  static_cast<std::size_t>(buffer_.size()) + (data.size_bytes() - available())));
+            } else {
+                return false;
+            }
         }
         std::memcpy(buffer_.data() + position_, data.data(), data.size_bytes());
         position_ += data.size_bytes();
