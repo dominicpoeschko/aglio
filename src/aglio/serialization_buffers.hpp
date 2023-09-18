@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstring>
 #include <span>
+#include <limits>
 
 namespace aglio {
 template<typename Buffer>
