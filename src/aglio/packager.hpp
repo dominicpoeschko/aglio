@@ -7,7 +7,7 @@
 #include <functional>
 #include <optional>
 #include <span>
-
+#include <fmt/format.h>
 namespace aglio {
 
 namespace detail {
@@ -20,7 +20,7 @@ namespace detail {
                 using type = std::uint8_t;
             };
             static constexpr auto UseCrc = [] {
-                if constexpr(requires { Config_::Crc; }) {
+                if constexpr(requires { typename Config_::Crc; }) {
                     return true;
                 } else {
                     return false;
@@ -34,7 +34,7 @@ namespace detail {
                 }
             }();
             using Crc                          = decltype([] {
-                if constexpr(requires { Config_::Crc; }) {
+                if constexpr(requires { typename Config_::Crc; }) {
                     return typename Config_::Crc{};
                 } else {
                     return NoCrc{};
@@ -149,7 +149,6 @@ namespace detail {
         static constexpr void pack(Buffer& buffer, T const& v) {
             BufferAdapter<Buffer> headerBuffer{buffer};
             headerBuffer.resize(HeaderSize);
-            headerBuffer.finalize();
 
             BufferAdapter<decltype(headerBuffer)> bodyBuffer{headerBuffer};
             Serializer::serialize(bodyBuffer, v);
