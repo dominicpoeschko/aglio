@@ -4,7 +4,6 @@
 #include "serializer.hpp"
 
 #include <cstddef>
-#include <expected>
 #include <functional>
 #include <optional>
 #include <span>
@@ -35,7 +34,7 @@ namespace detail {
                 }
             }();
             using Crc                          = decltype([] {
-                if constexpr(requires { typename Config_::Crc{}; }) {
+                if constexpr(requires { Config_::Crc; }) {
                     return typename Config_::Crc{};
                 } else {
                     return NoCrc{};
@@ -191,7 +190,7 @@ namespace detail {
         }
 
         template<typename T, typename Buffer>
-        static constexpr std::expected<std::size_t, std::size_t> unpack(Buffer& buffer, T& v) {
+        static constexpr std::optional<std::size_t> unpack(Buffer& buffer, T& v) {
             std::span span{buffer};
 
             while(true) {
@@ -209,7 +208,7 @@ namespace detail {
                 };
 
                 if(HeaderSize + CrcSize > span.size()) {
-                    return std::unexpected{buffer.size() - span.size()};
+                    return std::nullopt;
                 }
 
                 if constexpr(Config::UsePackageStart) {
@@ -251,7 +250,7 @@ namespace detail {
                 }
 
                 if(HeaderSize + read_bodySize > span.size()) {
-                    return std::unexpected{buffer.size() - span.size()};
+                    return std::nullopt;
                 }
 
                 if constexpr(Config::UseCrc) {
