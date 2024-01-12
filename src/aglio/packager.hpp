@@ -4,10 +4,10 @@
 #include "serializer.hpp"
 
 #include <cstddef>
+#include <fmt/format.h>
 #include <functional>
 #include <optional>
 #include <span>
-#include <fmt/format.h>
 namespace aglio {
 
 namespace detail {
@@ -256,12 +256,18 @@ namespace detail {
                     Crc_t read_bodyCrc{};
                     std::memcpy(
                       std::addressof(read_bodyCrc),
-                      std::next(span.data(), (HeaderSize + read_bodySize) - CrcSize),
+                      std::next(
+                        span.data(),
+                        static_cast<std::make_signed_t<std::size_t>>(
+                          (HeaderSize + read_bodySize) - CrcSize)),
                       CrcSize);
 
                     auto const calced_bodyCrc = Config::Crc::calc(std::as_bytes(std::span{
                       std::next(span.begin(), HeaderSize),
-                      std::next(span.begin(), (HeaderSize + read_bodySize) - CrcSize)}));
+                      std::next(
+                        span.begin(),
+                        static_cast<std::make_signed_t<std::size_t>>(
+                          (HeaderSize + read_bodySize) - CrcSize))}));
 
                     if(calced_bodyCrc != read_bodyCrc) {
                         skip();
