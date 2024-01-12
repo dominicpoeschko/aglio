@@ -215,7 +215,7 @@ namespace detail {
                 if constexpr(Config::UsePackageStart) {
                     PackageStart_t read_packageStart{};
 
-                    std::memcpy(std::addressof(read_packageStart), span.data(), PackageSizeSize);
+                    std::memcpy(std::addressof(read_packageStart), span.data(), PackageStartSize);
 
                     if(read_packageStart != PackageStart) {
                         skip();
