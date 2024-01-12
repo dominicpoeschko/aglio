@@ -4,6 +4,7 @@
 #include "serializer.hpp"
 
 #include <cstddef>
+#include <expected>
 #include <functional>
 #include <optional>
 #include <span>
@@ -11,183 +12,308 @@
 namespace aglio {
 
 namespace detail {
-    template<typename Serializer, typename Config>
-    struct PackagerWithSize {
-    private:
-        template<typename T>
-        static constexpr std::optional<T> unpack_impl(std::span<std::byte const> buffer) {
-            std::optional<T>                  packet;
-            aglio::DynamicDeserializationView debuff{buffer};
 
-            packet.emplace();
-            if(!Serializer::deserialize(debuff, *packet)) {
-                packet.reset();
-                return packet;
+    template<typename Serializer, typename Config_>
+    struct Packager {
+    private:
+        struct Config : Config_ {
+            struct NoCrc {
+                using type = std::uint8_t;
+            };
+            static constexpr auto UseCrc = [] {
+                if constexpr(requires { Config_::Crc; }) {
+                    return true;
+                } else {
+                    return false;
+                }
+            }();
+            static constexpr auto UsePackageStart = [] {
+                if constexpr(requires { Config_::PackageStart; }) {
+                    return true;
+                } else {
+                    return false;
+                }
+            }();
+            using Crc                          = decltype([] {
+                if constexpr(requires { typename Config_::Crc{}; }) {
+                    return typename Config_::Crc{};
+                } else {
+                    return NoCrc{};
+                }
+            }());
+            static constexpr auto PackageStart = [] {
+                if constexpr(requires { Config_::PackageStart; }) {
+                    return Config_::PackageStart;
+                } else {
+                    return std::uint8_t{};
+                }
+            }();
+            using Size_t                  = typename Config_::Size_t;
+            static constexpr auto MaxSize = [] {
+                if constexpr(requires { Config_::MaxSize; }) {
+                    return Config_::MaxSize;
+                } else {
+                    return std::numeric_limits<Size_t>::max();
+                }
+            }();
+        };
+
+        using PackageStart_t = std::remove_cvref_t<decltype(Config::PackageStart)>;
+        using Crc_t          = std::remove_cvref_t<typename Config::Crc::type>;
+
+        static constexpr PackageStart_t PackageStart{Config::PackageStart};
+        static constexpr std::byte      FirstByte{PackageStart & 0xFF};
+        static constexpr Size_t         MaxSize{Config::MaxSize};
+
+        static_assert(
+          std::is_trivial_v<PackageStart_t> || Config::UsePackageStart == false,
+          "start needs to by trivial");
+        static_assert(
+          std::is_trivial_v<Crc_t> || Config::UseCrc == false,
+          "crc needs to by trivial");
+        static_assert(std::is_trivial_v<Size_t>, "size needs to by trivial");
+        static_assert(
+          std::numeric_limits<Size_t>::max() >= MaxSize,
+          "max size needs to fit into Size_t");
+        static_assert(std::endian::native == std::endian::little, "needs little endian");
+
+        static constexpr std::size_t PackageStartSize{
+          Config::UsePackageStart ? sizeof(PackageStart_t) : 0};
+
+        static constexpr std::size_t PackageSizeSize{sizeof(Size_t)};
+
+        static constexpr std::size_t CrcSize{Config::UseCrc ? sizeof(Crc_t) : 0};
+
+        static constexpr std::size_t HeaderSize{PackageStartSize + PackageSizeSize + CrcSize};
+
+        template<typename Buffer>
+        struct BufferAdapter {
+        private:
+            Buffer&           buffer;
+            std::size_t const startSize;
+            std::size_t       finalizedSize{0};
+            bool              finalized{false};
+
+        public:
+            explicit BufferAdapter(Buffer& buffer_) : buffer{buffer_}, startSize{buffer.size()} {}
+
+            BufferAdapter(BufferAdapter const&)             = delete;
+            BufferAdapter(BufferAdapter&&)                  = delete;
+            BufferAdapter& operator==(BufferAdapter const&) = delete;
+            BufferAdapter& operator==(BufferAdapter&&)      = delete;
+
+            std::size_t size() const { return buffer.size() - startSize; }
+
+            std::size_t finalized_size() const { return finalizedSize - startSize; }
+
+            void resize(std::size_t newSize) { buffer.resize(newSize + startSize); }
+
+            auto& operator[](std::size_t pos) { return buffer[pos]; }
+
+            void finalize() {
+                finalizedSize = buffer.size();
+                finalized     = true;
             }
-            return packet;
-        }
+
+            auto data() {
+                return std::next(
+                  buffer.data(),
+                  static_cast<std::make_signed_t<std::size_t>>(startSize));
+            }
+
+            auto begin() {
+                return std::next(
+                  buffer.begin(),
+                  static_cast<std::make_signed_t<std::size_t>>(startSize));
+            }
+            auto end() {
+                if(finalized) {
+                    return std::next(
+                      buffer.begin(),
+                      static_cast<std::make_signed_t<std::size_t>>(finalizedSize));
+                } else {
+                    return buffer.end();
+                }
+            }
+
+            bool empty() {
+                if(finalized) {
+                    return finalizedSize - startSize == 0;
+                } else {
+                    return buffer.size() <= startSize;
+                }
+            }
+        };
 
     public:
         template<typename T, typename Buffer>
-        static constexpr bool pack(Buffer& buffer, T const& v) {
-            aglio::DynamicSerializationView sebuff{buffer};
-            typename Config::Size_t         size{};
-            if(!Serializer::serialize(sebuff, size, v)) {
-                return false;
+        static constexpr void pack(Buffer& buffer, T const& v) {
+            BufferAdapter<Buffer> headerBuffer{buffer};
+            headerBuffer.resize(HeaderSize);
+            headerBuffer.finalize();
+
+            BufferAdapter<decltype(headerBuffer)> bodyBuffer{headerBuffer};
+            Serializer::serialize(bodyBuffer, v);
+            bodyBuffer.finalize();
+
+            BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
+            if constexpr(Config::UseCrc) {
+                auto const bodyCrc = Config::Crc::calc(
+                  std::as_bytes(std::span{bodyBuffer.begin(), bodyBuffer.end()}));
+
+                crcBuffer.resize(CrcSize);
+                std::memcpy(crcBuffer.data(), std::addressof(bodyCrc), CrcSize);
             }
-            size = static_cast<typename Config::Size_t>(sebuff.size());
-            aglio::DynamicSerializationView tmp(buffer);
-            if(!Serializer::serialize(tmp, size)) {
-                return false;
+            crcBuffer.finalize();
+
+            Size_t const bodySize = static_cast<Config::Size_t>(
+              bodyBuffer.finalized_size() + crcBuffer.finalized_size());
+
+            if constexpr(Config::UsePackageStart) {
+                std::memcpy(headerBuffer.data(), std::addressof(PackageStart), PackageStartSize);
             }
-            buffer.resize(sebuff.size());
-            return true;
+
+            std::memcpy(
+              std::next(headerBuffer.data(), PackageStartSize),
+              std::addressof(bodySize),
+              PackageSizeSize);
+
+            if constexpr(Config::UseCrc) {
+                auto const headerCrc = Config::Crc::calc(std::as_bytes(std::span{
+                  headerBuffer.begin(),
+                  std::next(headerBuffer.begin(), PackageStartSize + PackageSizeSize)}));
+
+                std::memcpy(
+                  std::next(headerBuffer.data(), PackageStartSize + PackageSizeSize),
+                  std::addressof(headerCrc),
+                  CrcSize);
+            }
         }
 
         template<typename T, typename Buffer>
-        static constexpr std::optional<T> unpack(Buffer& buffer) {
-            std::optional<T>                  packet;
-            typename Config::Size_t           size;
-            aglio::DynamicDeserializationView debuff{buffer};
-            if(!Serializer::deserialize(debuff, size)) {
-                return packet;
-            }
+        static constexpr std::expected<std::size_t, std::size_t> unpack(Buffer& buffer, T& v) {
+            std::span span{buffer};
 
-            if(size > buffer.size()) {
-                return packet;
-            }
+            while(true) {
+                auto skip = [&]() {
+                    span = span.subspan(1);
 
-            packet = unpack_impl<T>(debuff.span());
-            buffer.erase(
-              buffer.begin(),
-              std::next(
-                buffer.begin(),
-                static_cast<std::make_signed_t<typename Config::Size_t>>(size)));
-            return packet;
-        }
-        template<typename T>
-        static constexpr std::optional<T> unpack(std::span<std::byte const> buffer) {
-            std::optional<T>                  packet;
-            typename Config::Size_t           size;
-            aglio::DynamicDeserializationView debuff{buffer};
-            if(!Serializer::deserialize(debuff, size)) {
-                return packet;
-            }
+                    if constexpr(Config::UsePackageStart) {
+                        auto const pos = std::find_if(span.begin(), span.end(), [](auto b) {
+                            return std::byte{b} == FirstByte;
+                        });
 
-            if(size > buffer.size()) {
-                return packet;
-            }
+                        span = span.subspan(
+                          static_cast<std::size_t>(std::distance(span.begin(), pos)));
+                    }
+                };
 
-            packet = unpack_impl<T>(debuff.span());
-            return packet;
+                if(HeaderSize + CrcSize > span.size()) {
+                    return std::unexpected{buffer.size() - span.size()};
+                }
+
+                if constexpr(Config::UsePackageStart) {
+                    PackageStart_t read_packageStart{};
+
+                    std::memcpy(std::addressof(read_packageStart), span.data(), PackageSizeSize);
+
+                    if(read_packageStart != PackageStart) {
+                        skip();
+                        continue;
+                    }
+                }
+                if constexpr(Config::UseCrc) {
+                    Crc_t read_headerCrc{};
+                    std::memcpy(
+                      std::addressof(read_headerCrc),
+                      std::next(span.data(), PackageStartSize + PackageSizeSize),
+                      CrcSize);
+
+                    auto const calced_headerCrc = Config::Crc::calc(std::as_bytes(std::span{
+                      span.begin(),
+                      std::next(span.begin(), PackageStartSize + PackageSizeSize)}));
+
+                    if(calced_headerCrc != read_headerCrc) {
+                        skip();
+                        continue;
+                    }
+                }
+
+                Size_t read_bodySize{};
+                std::memcpy(
+                  std::addressof(read_bodySize),
+                  std::next(span.data(), PackageStartSize),
+                  PackageSizeSize);
+
+                if(read_bodySize > MaxSize) {
+                    skip();
+                    continue;
+                }
+
+                if(HeaderSize + read_bodySize > span.size()) {
+                    return std::unexpected{buffer.size() - span.size()};
+                }
+
+                if constexpr(Config::UseCrc) {
+                    Crc_t read_bodyCrc{};
+                    std::memcpy(
+                      std::addressof(read_bodyCrc),
+                      std::next(span.data(), (HeaderSize + read_bodySize) - CrcSize),
+                      CrcSize);
+
+                    auto const calced_bodyCrc = Config::Crc::calc(std::as_bytes(std::span{
+                      std::next(span.begin(), HeaderSize),
+                      std::next(span.begin(), (HeaderSize + read_bodySize) - CrcSize)}));
+
+                    if(calced_bodyCrc != read_bodyCrc) {
+                        skip();
+                        continue;
+                    }
+                }
+                auto s = span.subspan(HeaderSize, read_bodySize - CrcSize);
+
+                auto ec = Serializer::deserialize(s, v);
+
+                if(ec) {
+                    skip();
+                    continue;
+                }
+
+                if(ec.location != (read_bodySize - CrcSize)) {
+                    skip();
+                    continue;
+                }
+
+                span = span.subspan(HeaderSize + read_bodySize);
+
+                return buffer.size() - span.size();
+            }
         }
     };
-    template<typename Serializer, typename Config>
-    struct PackagerWithCrc {
-        static_assert(
-          std::is_trivial_v<decltype(Config::PackageStart)>,
-          "start needs to by trivial");
-        static_assert(std::is_trivial_v<typename Config::Crc::type>, "crc needs to by trivial");
-        static_assert(std::is_trivial_v<typename Config::Size_t>, "size needs to by trivial");
 
-        static constexpr std::size_t StartSize = sizeof(decltype(Config::PackageStart));
-        static constexpr std::size_t CrcSize   = sizeof(typename Config::Crc::type);
-        static constexpr std::size_t SizeSize  = sizeof(typename Config::Size_t);
-
+    struct Serializer {
         template<typename T, typename Buffer>
-        static constexpr bool pack(Buffer& buffer, T const& v) {
+        static void serialize(Buffer& buffer, T const& v) {
             aglio::DynamicSerializationView sebuff{buffer};
 
-            typename Config::Size_t size{};
-            if(!Serializer::serialize(sebuff, Config::PackageStart, size, v)) {
-                return false;
-            }
-
-            size = static_cast<typename Config::Size_t>(sebuff.size() - StartSize);
-            aglio::DynamicSerializationView tmp{buffer};
-            if(!Serializer::serialize(tmp, Config::PackageStart, size)) {
-                return false;
-            }
-            typename Config::Crc::type const crc = Config::Crc::calc(std::as_bytes(
-              std::span{buffer.begin(), std::next(buffer.begin(), size + StartSize)}));
-            if(!Serializer::serialize(sebuff, crc)) {
-                return false;
-            }
-            buffer.resize(sebuff.size());
-            return true;
+            aglio::Serializer::serialize(sebuff, v);
         }
 
+        struct parse_error final {
+            bool        ec{};
+            std::size_t location{};
+
+            operator bool() const { return ec; }
+        };
+
         template<typename T, typename Buffer>
-        static constexpr std::optional<T> unpack(Buffer& buffer) {
-            std::optional<T> packet;
-            while(true) {
-                packet.reset();
-                if((StartSize + SizeSize) > buffer.size()) {
-                    return packet;
-                }
+        static parse_error deserialize(Buffer& buffer, T& v) {
+            aglio::DynamicDeserializationView debuff{buffer};
 
-                std::remove_cv_t<decltype(Config::PackageStart)> start;
-                typename Config::Size_t                          size;
-                aglio::DynamicDeserializationView                debuff{buffer};
-                if(!Serializer::deserialize(debuff, start, size)) {
-                    buffer.erase(buffer.begin());
-                    continue;
-                }
-
-                if(start != Config::PackageStart) {
-                    buffer.erase(buffer.begin());
-                    continue;
-                }
-
-                if(size > Config::MaxSize) {
-                    buffer.erase(buffer.begin());
-                    continue;
-                }
-
-                constexpr std::size_t ExtraSize = CrcSize + StartSize;
-
-                if(size + ExtraSize > buffer.size()) {
-                    return packet;
-                }
-
-                std::size_t const packet_size = size - SizeSize;
-
-                debuff.skip(packet_size);
-                typename Config::Crc::type crc;
-                if(!Serializer::deserialize(debuff, crc)) {
-                    buffer.erase(buffer.begin());
-                    continue;
-                }
-
-                typename Config::Crc::type const calcedCrc
-                  = Config::Crc::calc(std::as_bytes(std::span{
-                    buffer.begin(),
-                    std::next(
-                      buffer.begin(),
-                      static_cast<std::make_signed_t<std::size_t>>(size + StartSize))}));
-
-                if(calcedCrc != crc) {
-                    buffer.erase(buffer.begin());
-                    continue;
-                }
-
-                debuff.unskip(packet_size + CrcSize);
-                packet.emplace();
-
-                typename Config::Crc::type crc2;
-                if(!Serializer::deserialize(debuff, *packet, crc2)) {
-                    buffer.erase(buffer.begin());
-                    continue;
-                }
-
-                if(calcedCrc != crc2) {
-                    buffer.erase(buffer.begin());
-                    continue;
-                }
-
-                buffer.erase(buffer.begin(), std::next(buffer.begin(), size + ExtraSize));
-                return packet;
+            if(!aglio::Serializer::deserialize(debuff, v)) {
+                return parse_error{.ec = true, .location = 0};
             }
+            return parse_error{.ec = false, .location = debuff.size() - debuff.available()};
         }
     };
 
@@ -195,22 +321,17 @@ namespace detail {
 
 template<typename Crc_>
 struct CrcConfig {
-    static constexpr bool isChannelSave         = false;
     using Crc                                   = Crc_;
     using Size_t                                = std::uint16_t;
     static constexpr std::uint16_t PackageStart = 0x55AA;
-    static constexpr std::size_t   MaxSize      = 1000;
+    static constexpr Size_t        MaxSize      = 2048;
 };
 
 struct IPConfig {
-    static constexpr bool isChannelSave = true;
-    using Size_t                        = std::uint32_t;
+    using Size_t = std::uint32_t;
 };
 
 template<typename Config>
-struct Packager
-  : std::conditional_t<
-      Config::isChannelSave,
-      detail::PackagerWithSize<Serializer, Config>,
-      detail::PackagerWithCrc<Serializer, Config>> {};
+using Packager = detail::Packager<detail::Serializer, Config>;
+
 }   // namespace aglio

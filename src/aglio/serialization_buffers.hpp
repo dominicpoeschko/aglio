@@ -3,8 +3,8 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <span>
 #include <limits>
+#include <span>
 
 namespace aglio {
 template<typename Buffer>
@@ -32,7 +32,10 @@ public:
                 return false;
             }
         }
-        std::memcpy(buffer_.data() + position_, data.data(), data.size_bytes());
+        std::memcpy(
+          std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)),
+          data.data(),
+          data.size_bytes());
         position_ += data.size_bytes();
         return true;
     }
@@ -60,7 +63,7 @@ public:
     }
 
     constexpr std::span<std::byte const> span() {
-        return std::as_bytes(std::span{buffer_.data() + position_, available()});
+        return std::as_bytes(std::span{std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)), available()});
     }
 
     constexpr bool extract(std::span<std::byte> data) {
@@ -70,7 +73,7 @@ public:
         if(data.size_bytes() > available()) {
             return false;
         }
-        std::memcpy(data.data(), buffer_.data() + position_, data.size_bytes());
+        std::memcpy(data.data(), std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)), data.size_bytes());
         position_ += data.size_bytes();
         return true;
     }
