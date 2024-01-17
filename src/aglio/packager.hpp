@@ -34,7 +34,7 @@ namespace detail {
                 }
             }();
             using Crc                          = decltype([] {
-                if constexpr(requires { typename Config_::Crc; }) {
+                if constexpr(UseCrc) {
                     return typename Config_::Crc{};
                 } else {
                     return NoCrc{};
