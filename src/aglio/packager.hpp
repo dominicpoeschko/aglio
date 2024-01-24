@@ -19,14 +19,21 @@ namespace detail {
             struct NoCrc {
                 using type = std::uint8_t;
             };
-            static constexpr auto UseCrc = [] {
+            static constexpr bool UseCrc = [] {
                 if constexpr(requires { typename Config_::Crc; }) {
                     return true;
                 } else {
                     return false;
                 }
             }();
-            static constexpr auto UsePackageStart = [] {
+            static constexpr bool UseHeaderCrc = [] {
+                if constexpr(requires { Config_::UseHeaderCrc; }) {
+                    return Config_::UseHeaderCrc && UseCrc;
+                } else {
+                    return UseCrc;
+                }
+            }();
+            static constexpr bool UsePackageStart = [] {
                 if constexpr(requires { Config_::PackageStart; }) {
                     return true;
                 } else {
@@ -59,6 +66,7 @@ namespace detail {
 
         using PackageStart_t = std::remove_cvref_t<decltype(Config::PackageStart)>;
         using Crc_t          = std::remove_cvref_t<typename Config::Crc::type>;
+        using Size_t         = std::remove_cvref_t<typename Config::Size_t>;
 
         static constexpr PackageStart_t PackageStart{Config::PackageStart};
         static constexpr std::byte      FirstByte{PackageStart & 0xFF};
@@ -83,7 +91,8 @@ namespace detail {
 
         static constexpr std::size_t CrcSize{Config::UseCrc ? sizeof(Crc_t) : 0};
 
-        static constexpr std::size_t HeaderSize{PackageStartSize + PackageSizeSize + CrcSize};
+        static constexpr std::size_t HeaderSize{
+          PackageStartSize + PackageSizeSize + (Config::UseHeaderCrc ? CrcSize : 0)};
 
         template<typename Buffer>
         struct BufferAdapter {
@@ -154,18 +163,18 @@ namespace detail {
             Serializer::serialize(bodyBuffer, v);
             bodyBuffer.finalize();
 
-            BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
-            if constexpr(Config::UseCrc) {
-                auto const bodyCrc = Config::Crc::calc(
+            if constexpr(Config::UseCrc && Config::UseHeaderCrc) {
+                BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
+                auto const                          bodyCrc = Config::Crc::calc(
                   std::as_bytes(std::span{bodyBuffer.begin(), bodyBuffer.end()}));
 
                 crcBuffer.resize(CrcSize);
                 std::memcpy(crcBuffer.data(), std::addressof(bodyCrc), CrcSize);
+                crcBuffer.finalize();
             }
-            crcBuffer.finalize();
 
-            Size_t const bodySize = static_cast<Config::Size_t>(
-              bodyBuffer.finalized_size() + crcBuffer.finalized_size());
+            Size_t const bodySize
+              = static_cast<Config::Size_t>(bodyBuffer.finalized_size() + CrcSize);
 
             if constexpr(Config::UsePackageStart) {
                 std::memcpy(headerBuffer.data(), std::addressof(PackageStart), PackageStartSize);
@@ -176,7 +185,17 @@ namespace detail {
               std::addressof(bodySize),
               PackageSizeSize);
 
-            if constexpr(Config::UseCrc) {
+            if constexpr(Config::UseCrc && !Config::UseHeaderCrc) {
+                BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
+                auto const                          bodyCrc = Config::Crc::calc(
+                  std::as_bytes(std::span{headerBuffer.begin(), bodyBuffer.end()}));
+
+                crcBuffer.resize(CrcSize);
+                std::memcpy(crcBuffer.data(), std::addressof(bodyCrc), CrcSize);
+                crcBuffer.finalize();
+            }
+
+            if constexpr(Config::UseHeaderCrc) {
                 auto const headerCrc = Config::Crc::calc(std::as_bytes(std::span{
                   headerBuffer.begin(),
                   std::next(headerBuffer.begin(), PackageStartSize + PackageSizeSize)}));
@@ -205,7 +224,6 @@ namespace detail {
                           static_cast<std::size_t>(std::distance(span.begin(), pos)));
                     }
                 };
-
                 if(HeaderSize + CrcSize > span.size()) {
                     return std::nullopt;
                 }
@@ -220,7 +238,8 @@ namespace detail {
                         continue;
                     }
                 }
-                if constexpr(Config::UseCrc) {
+
+                if constexpr(Config::UseHeaderCrc) {
                     Crc_t read_headerCrc{};
                     std::memcpy(
                       std::addressof(read_headerCrc),
@@ -263,12 +282,11 @@ namespace detail {
                       CrcSize);
 
                     auto const calced_bodyCrc = Config::Crc::calc(std::as_bytes(std::span{
-                      std::next(span.begin(), HeaderSize),
+                      std::next(span.begin(), Config::UseHeaderCrc ? HeaderSize : 0),
                       std::next(
                         span.begin(),
                         static_cast<std::make_signed_t<std::size_t>>(
                           (HeaderSize + read_bodySize) - CrcSize))}));
-
                     if(calced_bodyCrc != read_bodyCrc) {
                         skip();
                         continue;
