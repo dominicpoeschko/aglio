@@ -1,0 +1,41 @@
+name: CI
+
+on:
+    push:
+        branches:
+            - master
+    pull_request:
+        branches:
+            - master
+
+jobs:
+    build-and-test:
+        runs-on: ubuntu-latest
+        container:
+            image: archlinux:latest
+        strategy:
+            matrix:
+                compiler:
+                    - {cc: gcc, cxx: g++}
+                    - {cc: clang, cxx: clang++,}
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Set up C++ environment
+              run: |
+                pacman -Syu --noconfirm
+                pacman -S --noconfirm git cmake base-devel clang catch2
+
+            - name: Configure CMake
+              run: cmake -S tests -B build -DUSE_SANITIZER=address
+              env:
+                CC: ${{ matrix.compiler.cc }}
+                CXX: ${{ matrix.compiler.cxx }}
+
+            - name: Build project
+              run: cmake --build build
+
+            - name: Run tests
+              run: cd build && ctest --output-on-failure

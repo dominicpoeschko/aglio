@@ -1,0 +1,163 @@
+diff --git a/include/glaze/core/error_category.hpp b/include/glaze/core/error_category.hpp
+index 6b4262d9..47e1b06f 100644
+--- a/include/glaze/core/error_category.hpp
++++ b/include/glaze/core/error_category.hpp
+@@ -142,32 +142,32 @@ struct glz::meta<glz::error_code>
+                                      array_element_not_found, //
+                                      elements_not_convertible_to_design, //
+                                      unknown_distribution, //
+                                      invalid_distribution_elements, //
+                                      hostname_failure, //
+                                      includer_error, //
+                                      feature_not_supported};
+ };
+ 
+ #include <system_error>
+ 
+ namespace glz
+ {
+    struct glaze_error_category : public std::error_category
+    {
+       const char* name() const noexcept override { return "glaze"; }
+ 
+       std::string message(int ev) const override { return {meta<error_code>::keys[uint32_t(ev)]}; }
+    };
+ 
+-   inline glaze_error_category error_category{};
++   //inline glaze_error_category error_category{};
+ 
+-   inline std::error_code make_error_code(error_code e) { return {static_cast<int>(e), error_category}; }
++   //inline std::error_code make_error_code(error_code e) { return {static_cast<int>(e), error_category}; }
+ }
+ 
+ // Make Glaze error_code compatible with std::error_code
+ namespace std
+ {
+    template <>
+    struct is_error_code_enum<glz::error_code> : true_type
+    {};
+ }
+diff --git a/include/glaze/core/write.hpp b/include/glaze/core/write.hpp
+index aba2fb1d..e530b78b 100644
+--- a/include/glaze/core/write.hpp
++++ b/include/glaze/core/write.hpp
+@@ -89,28 +89,28 @@ namespace glz
+    {
+       size_t ix = 0;
+       to<Opts.format, std::remove_cvref_t<T>>::template op<Opts>(std::forward<T>(value), ctx, buffer, ix);
+       if (bool(ctx.error)) [[unlikely]] {
+          return glz::unexpected(error_ctx{ctx.error});
+       }
+       return {ix};
+    }
+ 
+    template <auto Opts, class T, raw_buffer Buffer>
+       requires write_supported<T, Opts.format>
+    [[nodiscard]] glz::expected<size_t, error_ctx> write(T&& value, Buffer&& buffer)
+    {
+       context ctx{};
+       return write<Opts>(std::forward<T>(value), std::forward<Buffer>(buffer), ctx);
+    }
+ 
+    // requires file_name to be null terminated
+    [[nodiscard]] inline error_code buffer_to_file(auto&& buffer, const sv file_name)
+    {
+-      auto file = std::ofstream(file_name.data(), std::ios::out);
+-      if (!file) {
+-         return error_code::file_open_failure;
+-      }
+-      file.write(buffer.data(), buffer.size());
++      //auto file = std::ofstream(file_name.data(), std::ios::out);
++      //if (!file) {
++      //   return error_code::file_open_failure;
++      //}
++      //file.write(buffer.data(), buffer.size());
+       return {};
+    }
+ }
+diff --git a/include/glaze/file/file_ops.hpp b/include/glaze/file/file_ops.hpp
+index c3376e83..4bb8b1dc 100644
+--- a/include/glaze/file/file_ops.hpp
++++ b/include/glaze/file/file_ops.hpp
+@@ -7,65 +7,65 @@
+ #include <filesystem>
+ #include <string>
+ 
+ #include "glaze/core/context.hpp"
+ 
+ #if defined(_MSC_VER) && !defined(__clang__)
+ // Turn off MSVC warning for unsafe fopen
+ #pragma warning(push)
+ #pragma warning(disable : 4996)
+ #endif
+ 
+ namespace glz
+ {
+    template <class T>
+    [[nodiscard]] error_code file_to_buffer(T& buffer, auto* file, const std::string_view path)
+    {
+       if (!file) {
+          return error_code::file_open_failure;
+       }
+ 
+-      std::error_code ec{};
+-      const auto n = std::filesystem::file_size(path, ec);
+-      if (ec) {
+-         std::fclose(file);
+-         return error_code::file_open_failure;
+-      }
+-      buffer.resize(n);
++      //std::error_code ec{};
++      //const auto n = std::filesystem::file_size(path, ec);
++      //if (ec) {
++      //   std::fclose(file);
++      //   return error_code::file_open_failure;
++      //}
++      //buffer.resize(n);
+ 
+-      if (n != std::fread(static_cast<void*>(buffer.data()), 1, n, file)) {
+-         std::fclose(file);
+-         return error_code::file_open_failure;
+-      }
++      //if (n != std::fread(static_cast<void*>(buffer.data()), 1, n, file)) {
++      //   std::fclose(file);
++      //   return error_code::file_open_failure;
++      //}
+ 
+-      if (std::fclose(file)) {
+-         return error_code::file_close_failure;
+-      }
++      //if (std::fclose(file)) {
++      //   return error_code::file_close_failure;
++      //}
+ 
+       return {};
+    }
+ 
+    template <class T>
+    [[nodiscard]] error_code file_to_buffer(T& buffer, const std::string_view file_name)
+    {
+-      auto* file = std::fopen(file_name.data(), "rb");
+-      return file_to_buffer(buffer, file, file_name);
++      //auto* file = std::fopen(file_name.data(), "rb");
++      return {};//file_to_buffer(buffer, file, file_name);
+    }
+ 
+    template <class T>
+    std::string file_to_buffer(T&& file_name)
+    {
+       std::string buffer{};
+       file_to_buffer(buffer, std::forward<T>(file_name));
+       return buffer;
+    }
+ 
+    inline std::filesystem::path relativize_if_not_absolute(const std::filesystem::path& working_directory,
+                                                            const std::filesystem::path& filepath)
+    {
+       if (filepath.is_absolute()) {
+          return filepath;
+       }
+ 
+       return working_directory / filepath;
+    }
+ }

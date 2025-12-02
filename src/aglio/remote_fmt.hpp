@@ -24,13 +24,9 @@ struct remote_fmt::formatter<T> {
         };
         add("{}(");
 
-        if(Size != 0){
-            for(std::size_t i = 0; i < Size - 1; ++i) {
-                add("{:m}, ");
-            }
-            if(Size != 0) {
-                add("{:m}");
-            }
+        if(Size != 0) {
+            for(std::size_t i = 0; i < Size - 1; ++i) { add("{:m}, "); }
+            if(Size != 0) { add("{:m}"); }
         }
 
         add(")");
@@ -45,20 +41,25 @@ struct remote_fmt::formatter<T> {
       = std::string_view{named_fmt<Size>.data(), named_fmt<Size>.size()};
 
     template<typename FormatContext>
-    constexpr auto format(T const& v, FormatContext& ctx) const {
-        using td = aglio::TypeDescriptor<T>;
+    constexpr auto format(T const&       v,
+                          FormatContext& ctx) const {
+        constexpr auto N = glz::reflect<T>::size;
 
-        constexpr std::size_t argCount = td::N_BaseClasses + td::N_Members;
+        auto const tie = glz::to_tie(v);
 
-        [[maybe_unused]] auto call = [&](auto const&... name_values) {
-            return format_to(
-              ctx.out(),
-              sc::create([]() { return named_fmt_sv<argCount>; }),
-              td::Name,
-              name_values...);
+        auto get_named_tuple = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            using std::get;
+            return std::make_tuple(std::tie(glz::reflect<T>::keys[Is], get<Is>(tie))...);
         };
 
-        return std::apply(call, td::get_named_tuple(v));
+        return std::apply(
+          [&](auto const&... name_values) {
+              return format_to(ctx.out(),
+                               sc::create([]() { return named_fmt_sv<N>; }),
+                               glz::type_name<T>,
+                               name_values...);
+          },
+          get_named_tuple(std::make_index_sequence<N>{}));
     }
 };
 #endif

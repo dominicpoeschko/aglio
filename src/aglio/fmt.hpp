@@ -2,18 +2,26 @@
 
 #include "type_descriptor.hpp"
 
-#include <format>
+#if __has_include(<fmt/format.h>)
+    #include <fmt/chrono.h>
+    #include <fmt/format.h>
+    #include <fmt/ranges.h>
+    #include <fmt/std.h>
 
 template<aglio::Described T>
-struct std::formatter<T> {
-    constexpr auto parse(std::format_parse_context& ctx) { return ctx.begin(); }
+struct fmt::formatter<T> {
+    template<typename ParseContext>
+    constexpr auto parse(ParseContext& ctx) const {
+        return ctx.begin();
+    }
 
-    auto format(T const&             v,
-                std::format_context& ctx) const {
+    template<typename FormatContext>
+    constexpr auto format(T const&       v,
+                          FormatContext& ctx) const -> decltype(ctx.out()) {
         constexpr auto N = glz::reflect<T>::size;
 
         auto out = ctx.out();
-        out      = std::format_to(out, "{}(", glz::type_name<T>);
+        out      = fmt::format_to(out, "{}(", glz::type_name<T>);
 
         auto const  tie = glz::to_tie(v);
         std::size_t n{};
@@ -25,11 +33,12 @@ struct std::formatter<T> {
                 ++n;
                 std::string_view sep{", "};
                 if(n == N) { sep = ""; }
-                out = std::format_to(out, "\"{}\": {}{}", name, value, sep);
+                out = fmt::format_to(out, "\"{}\": {}{}", name, value, sep);
             };
             (process.template operator()<Is>(), ...);
         }(std::make_index_sequence<N>{});
 
-        return std::format_to(out, ")");
+        return fmt::format_to(out, ")");
     }
 };
+#endif
