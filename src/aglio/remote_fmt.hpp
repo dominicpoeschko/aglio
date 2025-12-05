@@ -12,54 +12,55 @@
 
 template<aglio::Described T>
 struct remote_fmt::formatter<T> {
-    template<std::size_t Size>
     static consteval auto getNamedFmtString() {
-        std::array<char, Size == 0 ? 4 : 2 + Size * 6> buff;
-        auto                                           it  = buff.begin();
-        auto                                           add = [&](std::string_view v) {
-            for(auto c : v) {
-                *it = c;
-                ++it;
-            }
-        };
-        add("{}(");
+        constexpr auto  N    = glz::reflect<T>::size;
+        constexpr auto& keys = glz::reflect<T>::keys;
 
-        if(Size != 0) {
-            for(std::size_t i = 0; i < Size - 1; ++i) { add("{:m}, "); }
-            if(Size != 0) { add("{:m}"); }
+        constexpr std::size_t size = [] {
+            std::size_t s{};
+            s += glz::type_name<T>.size();
+            s += 11;   // "@TYPENAME(" and ")"
+            s += 4;    // "{{" and "}}"
+            if constexpr(N != 0) {
+                s += (N - 1) * 2;   // ", "
+                s += N * 4;         // ": {}"
+                for(std::size_t i = 0; i < N; ++i) { s += keys[i].size(); }
+            }
+            return s;
+        }();
+
+        std::array<char, size> buff;
+        auto                   it = buff.begin();
+        auto add = [&](std::string_view v) { it = std::copy(v.begin(), v.end(), it); };
+
+        add("@TYPENAME(");
+        add(glz::type_name<T>);
+        add(")");
+        add("{{");
+
+        if constexpr(N > 0) {
+            for(std::size_t i = 0; i < N; ++i) {
+                add(keys[i]);
+                add(": {}");
+                if(i < N - 1) { add(", "); }
+            }
         }
 
-        add(")");
+        add("}}");
         return buff;
     }
 
-    template<std::size_t Size>
-    static constexpr auto named_fmt = getNamedFmtString<Size>();
-
-    template<std::size_t Size>
-    static constexpr auto named_fmt_sv
-      = std::string_view{named_fmt<Size>.data(), named_fmt<Size>.size()};
+    static constexpr auto named_fmt    = getNamedFmtString();
+    static constexpr auto named_fmt_sv = std::string_view{named_fmt.data(), named_fmt.size()};
 
     template<typename FormatContext>
     constexpr auto format(T const&       v,
                           FormatContext& ctx) const {
-        constexpr auto N = glz::reflect<T>::size;
-
-        auto const tie = glz::to_tie(v);
-
-        auto get_named_tuple = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            using std::get;
-            return std::make_tuple(std::tie(glz::reflect<T>::keys[Is], get<Is>(tie))...);
-        };
-
-        return std::apply(
-          [&](auto const&... name_values) {
-              return format_to(ctx.out(),
-                               sc::create([]() { return named_fmt_sv<N>; }),
-                               glz::type_name<T>,
-                               name_values...);
+        return glz::apply(
+          [&](auto const&... values) {
+              return format_to(ctx.out(), sc::create([] { return named_fmt_sv; }), values...);
           },
-          get_named_tuple(std::make_index_sequence<N>{}));
+          glz::to_tie(v));
     }
 };
 #endif

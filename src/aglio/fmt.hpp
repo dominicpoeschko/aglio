@@ -3,12 +3,14 @@
 #include "type_descriptor.hpp"
 
 #if __has_include(<fmt/format.h>)
+
     #include <fmt/chrono.h>
     #include <fmt/format.h>
     #include <fmt/ranges.h>
     #include <fmt/std.h>
 
 template<aglio::Described T>
+    requires(!fmt::is_range<T, char>::value)
 struct fmt::formatter<T> {
     template<typename ParseContext>
     constexpr auto parse(ParseContext& ctx) const {
@@ -16,29 +18,24 @@ struct fmt::formatter<T> {
     }
 
     template<typename FormatContext>
-    constexpr auto format(T const&       v,
-                          FormatContext& ctx) const -> decltype(ctx.out()) {
+    auto format(T const&       v,
+                FormatContext& ctx) const -> decltype(ctx.out()) {
+        auto out   = ctx.out();
+        out        = fmt::format_to(out, "{{");
+        bool first = true;
+
         constexpr auto N = glz::reflect<T>::size;
+        glz::for_each<N>([&]<auto I>() {
+            if(!first) { out = fmt::format_to(out, ", "); }
+            first = false;
+            out   = fmt::format_to(out,
+                                 "{}: {}",
+                                 glz::reflect<T>::keys[I],
+                                 glz::get<I>(glz::to_tie(v)));
+        });
 
-        auto out = ctx.out();
-        out      = fmt::format_to(out, "{}(", glz::type_name<T>);
-
-        auto const  tie = glz::to_tie(v);
-        std::size_t n{};
-        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            using std::get;
-            auto process = [&]<std::size_t I>() {
-                constexpr auto name  = glz::reflect<T>::keys[I];
-                auto const&    value = get<I>(tie);
-                ++n;
-                std::string_view sep{", "};
-                if(n == N) { sep = ""; }
-                out = fmt::format_to(out, "\"{}\": {}{}", name, value, sep);
-            };
-            (process.template operator()<Is>(), ...);
-        }(std::make_index_sequence<N>{});
-
-        return fmt::format_to(out, ")");
+        return fmt::format_to(out, "}}");
     }
 };
+
 #endif
