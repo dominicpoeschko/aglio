@@ -26,7 +26,7 @@ jobs:
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel clang catch2
+                pacman -S --noconfirm git cmake base-devel clang catch2 fmt
 
             - name: Configure CMake
               run: cmake -S tests -B build -DUSE_SANITIZER=address
