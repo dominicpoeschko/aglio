@@ -11,15 +11,32 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(cmake_helpers)
 
 include(${cmake_helpers_SOURCE_DIR}/FindOrFetch.cmake)
-find_or_fetch_package(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.11.0)
 
-find_or_fetch_package(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt GIT_TAG 12.1.0)
+find_or_fetch_package(
+    Catch2
+    GIT_REPOSITORY
+    https://github.com/catchorg/Catch2.git
+    GIT_TAG
+    v3.12.0
+    GIT_BRANCH
+    devel)
+
+find_or_fetch_package(
+    fmt
+    GIT_REPOSITORY
+    https://github.com/fmtlib/fmt
+    GIT_TAG
+    12.1.0
+    GIT_BRANCH
+    master)
 
 include(${cmake_helpers_SOURCE_DIR}/BuildOptions.cmake)
 
 add_subdirectory(../ ${CMAKE_CURRENT_BINARY_DIR}/aglio)
 
 add_executable(test_aglio test.cpp)
+
+set(USE_STD c++23)
 
 target_add_default_build_options(test_aglio PRIVATE)
 target_link_libraries(test_aglio PRIVATE aglio::aglio fmt::fmt Catch2::Catch2WithMain)

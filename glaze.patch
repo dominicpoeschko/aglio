@@ -1,15 +1,20 @@
 diff --git a/include/glaze/core/error_category.hpp b/include/glaze/core/error_category.hpp
-index 6b4262d9..47e1b06f 100644
+index f4d538a..6913e04 100644
 --- a/include/glaze/core/error_category.hpp
 +++ b/include/glaze/core/error_category.hpp
-@@ -142,32 +142,32 @@ struct glz::meta<glz::error_code>
-                                      array_element_not_found, //
-                                      elements_not_convertible_to_design, //
+@@ -148,37 +148,37 @@ struct glz::meta<glz::error_code>
                                       unknown_distribution, //
                                       invalid_distribution_elements, //
                                       hostname_failure, //
                                       includer_error, //
-                                      feature_not_supported};
+                                      feature_not_supported, //
+                                      // JSON Pointer errors (RFC 6901)
+                                      invalid_json_pointer, //
+                                      // JSON Patch errors (RFC 6902)
+                                      patch_test_failed, //
+                                      // Buffer errors
+                                      buffer_overflow, //
+                                      invalid_length};
  };
  
  #include <system_error>
@@ -38,22 +43,27 @@ index 6b4262d9..47e1b06f 100644
     {};
  }
 diff --git a/include/glaze/core/write.hpp b/include/glaze/core/write.hpp
-index aba2fb1d..e530b78b 100644
+index e5bb16b..735becd 100644
 --- a/include/glaze/core/write.hpp
 +++ b/include/glaze/core/write.hpp
-@@ -89,28 +89,28 @@ namespace glz
-    {
-       size_t ix = 0;
-       to<Opts.format, std::remove_cvref_t<T>>::template op<Opts>(std::forward<T>(value), ctx, buffer, ix);
-       if (bool(ctx.error)) [[unlikely]] {
-          return glz::unexpected(error_ctx{ctx.error});
-       }
-       return {ix};
+@@ -94,33 +94,33 @@ namespace glz
     }
  
     template <auto Opts, class T, raw_buffer Buffer>
        requires write_supported<T, Opts.format>
-    [[nodiscard]] glz::expected<size_t, error_ctx> write(T&& value, Buffer&& buffer)
+    [[nodiscard]] error_ctx write(T&& value, Buffer&& buffer, is_context auto&& ctx)
+    {
+       size_t ix = 0;
+       to<Opts.format, std::remove_cvref_t<T>>::template op<Opts>(std::forward<T>(value), ctx, buffer, ix);
+       if (bool(ctx.error)) [[unlikely]] {
+          return {ix, ctx.error, ctx.custom_error_message};
+       }
+       return {ix, error_code::none, ctx.custom_error_message};
+    }
+ 
+    template <auto Opts, class T, raw_buffer Buffer>
+       requires write_supported<T, Opts.format>
+    [[nodiscard]] error_ctx write(T&& value, Buffer&& buffer)
     {
        context ctx{};
        return write<Opts>(std::forward<T>(value), std::forward<Buffer>(buffer), ctx);
@@ -76,10 +86,15 @@ index aba2fb1d..e530b78b 100644
     }
  }
 diff --git a/include/glaze/file/file_ops.hpp b/include/glaze/file/file_ops.hpp
-index c3376e83..4bb8b1dc 100644
+index c3376e8..4bb8b1d 100644
 --- a/include/glaze/file/file_ops.hpp
 +++ b/include/glaze/file/file_ops.hpp
-@@ -7,65 +7,65 @@
+@@ -2,75 +2,75 @@
+ // For the license information refer to glaze.hpp
+ 
+ #pragma once
+ 
+ #include <cstdio>
  #include <filesystem>
  #include <string>
  
@@ -161,3 +176,8 @@ index c3376e83..4bb8b1dc 100644
        return working_directory / filepath;
     }
  }
+ 
+ #if defined(_MSC_VER) && !defined(__clang__)
+ // restore disabled warning
+ #pragma warning(pop)
+ #endif

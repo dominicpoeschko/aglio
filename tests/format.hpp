@@ -7,10 +7,14 @@
 template<typename T>
     requires std::is_enum_v<T>
 struct std::formatter<T> {
-    constexpr auto parse(std::format_parse_context& ctx) { return ctx.begin(); }
+    template<typename ParseContext>
+    constexpr auto parse(ParseContext& ctx) const {
+        return ctx.begin();
+    }
 
-    auto format(T const&             v,
-                std::format_context& ctx) const {
+    template<typename FormatContext>
+    auto format(T const&       v,
+                FormatContext& ctx) const {
         using underlying = std::underlying_type_t<T>;
         return std::format_to(ctx.out(), "{}", static_cast<underlying>(v));
     }

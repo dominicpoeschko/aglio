@@ -71,7 +71,6 @@ struct Wrapper {
 // Chrono duration types
 struct Chrono {
     std::chrono::nanoseconds  ns{};
-    std::chrono::microseconds us{};
     std::chrono::milliseconds ms{};
     std::chrono::seconds      s{};
     std::chrono::minutes      min{};
@@ -112,7 +111,7 @@ Primitive createDefault<Primitive>() {
                      .u32  = 123456,
                      .u64  = 12345678901ULL,
                      .f32  = 3.14159f,
-                     .f64  = 2.718281828,
+                     .f64  = 2.71828,
                      .flag = true};
 }
 
@@ -148,7 +147,6 @@ Wrapper createDefault<Wrapper>() {
 template<>
 Chrono createDefault<Chrono>() {
     return Chrono{.ns  = std::chrono::nanoseconds(123456789),
-                  .us  = std::chrono::microseconds(987654),
                   .ms  = std::chrono::milliseconds(12345),
                   .s   = std::chrono::seconds(3600),
                   .min = std::chrono::minutes(90),

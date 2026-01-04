@@ -11,6 +11,7 @@ template<typename Type>
 void test() {
     auto const        t = Types::createDefault<Type>();
     std::stringstream ss;
+    ss << std::boolalpha;
     ss << t;
 
     auto const s = ss.str();
