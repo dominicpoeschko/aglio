@@ -1,49 +1,5 @@
-diff --git a/include/glaze/core/error_category.hpp b/include/glaze/core/error_category.hpp
-index f4d538a..6913e04 100644
---- a/include/glaze/core/error_category.hpp
-+++ b/include/glaze/core/error_category.hpp
-@@ -148,37 +148,37 @@ struct glz::meta<glz::error_code>
-                                      unknown_distribution, //
-                                      invalid_distribution_elements, //
-                                      hostname_failure, //
-                                      includer_error, //
-                                      feature_not_supported, //
-                                      // JSON Pointer errors (RFC 6901)
-                                      invalid_json_pointer, //
-                                      // JSON Patch errors (RFC 6902)
-                                      patch_test_failed, //
-                                      // Buffer errors
-                                      buffer_overflow, //
-                                      invalid_length};
- };
- 
- #include <system_error>
- 
- namespace glz
- {
-    struct glaze_error_category : public std::error_category
-    {
-       const char* name() const noexcept override { return "glaze"; }
- 
-       std::string message(int ev) const override { return {meta<error_code>::keys[uint32_t(ev)]}; }
-    };
- 
--   inline glaze_error_category error_category{};
-+   //inline glaze_error_category error_category{};
- 
--   inline std::error_code make_error_code(error_code e) { return {static_cast<int>(e), error_category}; }
-+   //inline std::error_code make_error_code(error_code e) { return {static_cast<int>(e), error_category}; }
- }
- 
- // Make Glaze error_code compatible with std::error_code
- namespace std
- {
-    template <>
-    struct is_error_code_enum<glz::error_code> : true_type
-    {};
- }
 diff --git a/include/glaze/core/write.hpp b/include/glaze/core/write.hpp
-index e5bb16b..735becd 100644
+index e5bb16b3..c6994341 100644
 --- a/include/glaze/core/write.hpp
 +++ b/include/glaze/core/write.hpp
 @@ -94,33 +94,33 @@ namespace glz
@@ -86,7 +42,7 @@ index e5bb16b..735becd 100644
     }
  }
 diff --git a/include/glaze/file/file_ops.hpp b/include/glaze/file/file_ops.hpp
-index c3376e8..4bb8b1d 100644
+index c3376e83..4bb8b1dc 100644
 --- a/include/glaze/file/file_ops.hpp
 +++ b/include/glaze/file/file_ops.hpp
 @@ -2,75 +2,75 @@

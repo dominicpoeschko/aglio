@@ -20,7 +20,7 @@ find_or_fetch_package(
     GIT_REPOSITORY
     https://github.com/stephenberry/glaze.git
     GIT_TAG
-    v6.5.1
+    v7.0.1
     GIT_BRANCH
     main
     PATCH_FILE
