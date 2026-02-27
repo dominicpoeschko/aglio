@@ -17,7 +17,9 @@ jobs:
             matrix:
                 compiler:
                     - {cc: gcc, cxx: g++}
-                    - {cc: clang, cxx: clang++,}
+                    - {cc: gcc, cxx: g++, stdlib_debug: true, sanitizer: address}
+                    - {cc: clang, cxx: clang++}
+                    - {cc: clang, cxx: clang++, stdlib: libc++, stdlib_debug: true, sanitizer: address}
 
         steps:
             - name: Checkout repository
@@ -26,10 +28,14 @@ jobs:
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel clang catch2 fmt
+                pacman -S --noconfirm git cmake base-devel ${{ matrix.compiler.cc == 'clang' && 'clang' || '' }} ${{ matrix.compiler.stdlib == 'libc++' && 'libc++ lld' || '' }}
 
             - name: Configure CMake
-              run: cmake -S tests -B build -DUSE_SANITIZER=address
+              run: >
+                cmake -S tests -B build
+                ${{ matrix.compiler.sanitizer && format('-DUSE_SANITIZER={0}', matrix.compiler.sanitizer) || '' }}
+                ${{ matrix.compiler.stdlib && format('-DUSE_STD_LIB={0}', matrix.compiler.stdlib) || '' }}
+                ${{ matrix.compiler.stdlib_debug && '-DUSE_STDLIB_DEBUG=true' || '' }}
               env:
                 CC: ${{ matrix.compiler.cc }}
                 CXX: ${{ matrix.compiler.cxx }}

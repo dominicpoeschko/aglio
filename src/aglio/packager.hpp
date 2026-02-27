@@ -201,7 +201,7 @@ namespace detail {
                     return std::next(buffer.begin(),
                                      static_cast<std::make_signed_t<std::size_t>>(finalizedSize));
                 } else {
-                    return buffer.end();
+                    return std::next(begin(), static_cast<std::make_signed_t<std::size_t>>(size()));
                 }
             }
 
@@ -382,7 +382,7 @@ namespace detail {
                             std::next(span.data(), PackageStartSize),
                             PackageSizeSize);
 
-                if(read_bodySize > MaxSize) {
+                if(read_bodySize > MaxSize || read_bodySize < CrcSize) {
                     skip();
                     continue;
                 }

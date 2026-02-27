@@ -11,7 +11,6 @@ struct MyCrc {
     using type = std::uint32_t;
 
     static type calc(std::span<std::byte const> data) {
-        // A dummy CRC function for testing
         type crc = 0;
         for(auto b : data) { crc += static_cast<type>(b); }
         return crc;
@@ -182,12 +181,10 @@ TEST_CASE("Serializer rejects range that exceeds fixed-capacity container max_si
           "[serializer]") {
     using Packager = aglio::Packager<Test::packager::Configs::Minimal>;
 
-    // Serialize a vector with more elements than the target array can hold
     std::vector<int>       src    = {1, 2, 3, 4, 5};
     std::vector<std::byte> buffer = {};
     REQUIRE(Packager::pack(buffer, src));
 
-    // Deserialize into a smaller array — must fail because 5 > max_size() == 3
     std::array<int, 3> dst{};
     auto               result = Packager::unpack(buffer, dst);
     CHECK(!result.has_value());
@@ -537,13 +534,10 @@ TEST_CASE("pack fails gracefully when output buffer max_size is exceeded",
     };
 
     using Packager = aglio::Packager<Test::packager::Configs::Minimal>;
-    // Minimal: 4-byte Size_t header + body
 
-    // int body = 4 bytes → total 8 bytes → fits exactly in max_size=8
     BoundedBuffer buf{};
     CHECK(Packager::pack(buf, int{42}));
 
-    // string "hello" body = Size_t(4) + 5 bytes = 9 bytes → total 13 bytes → exceeds 8
     BoundedBuffer buf2{};
     CHECK(!Packager::pack(buf2, std::string{"hello"}));
 }
@@ -580,6 +574,44 @@ TEST_CASE("Packager: truncated message returns nullopt",
     int  out    = 0;
     auto result = Packager::unpack(buffer, out);
     CHECK(!result.has_value());
+}
+
+TEST_CASE("Packager: bodySize smaller than CrcSize does not underflow",
+          "[packager]") {
+    SECTION("CrcNoHeader") {
+        using Packager = aglio::Packager<Test::packager::Configs::CrcNoHeader>;
+
+        std::vector<std::byte> buffer(8, std::byte{0});
+
+        int  out    = 0;
+        auto result = Packager::unpack(buffer, out);
+        CHECK(!result.has_value());
+    }
+
+    SECTION("FullNoHeaderCrc") {
+        using Packager = aglio::Packager<Test::packager::Configs::FullNoHeaderCrc>;
+
+        std::vector<std::byte> buffer(10, std::byte{0});
+        std::uint16_t const    pkg_start = 0xABCD;
+        std::memcpy(buffer.data(), &pkg_start, sizeof(pkg_start));
+
+        int  out    = 0;
+        auto result = Packager::unpack(buffer, out);
+        CHECK(!result.has_value());
+    }
+
+    SECTION("CrcNoHeader with nonzero bodySize still below CrcSize") {
+        using Packager = aglio::Packager<Test::packager::Configs::CrcNoHeader>;
+
+        for(std::uint32_t bad_size : {1u, 2u, 3u}) {
+            std::vector<std::byte> buffer(4 + bad_size, std::byte{0});
+            std::memcpy(buffer.data(), &bad_size, sizeof(bad_size));
+
+            int  out    = 0;
+            auto result = Packager::unpack(buffer, out);
+            CHECK(!result.has_value());
+        }
+    }
 }
 
 TEST_CASE("Packager: PackageStart byte pattern in body",

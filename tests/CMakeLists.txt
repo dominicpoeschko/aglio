@@ -38,6 +38,16 @@ add_executable(test_aglio test.cpp)
 
 set(USE_STD c++23)
 
+foreach(dep_target fmt Catch2 Catch2WithMain)
+    if(TARGET ${dep_target})
+        get_target_property(_imported ${dep_target} IMPORTED)
+        if(NOT _imported)
+            target_add_stdlib_flags(${dep_target})
+            target_add_stdlib_debug_flags(${dep_target})
+        endif()
+    endif()
+endforeach()
+
 target_add_default_build_options(test_aglio PRIVATE)
 target_link_libraries(test_aglio PRIVATE aglio::aglio fmt::fmt Catch2::Catch2WithMain)
 
