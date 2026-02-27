@@ -3,6 +3,7 @@
 #include "types.hpp"
 
 #include <aglio/packager.hpp>
+#include <aglio/serialization_buffers.hpp>
 
 namespace Test::packager {
 
@@ -17,45 +18,78 @@ struct MyCrc {
     }
 };
 
+struct MsgId {
+    std::uint8_t msg_type{};
+    std::uint8_t channel{};
+    bool         operator==(MsgId const&) const = default;
+};
+
+struct MsgIdCrc {
+    using type = MsgId;
+
+    static type calc(std::span<std::byte const> data) {
+        type r{};
+        for(auto b : data) {
+            r.msg_type += static_cast<std::uint8_t>(b);
+            r.channel += static_cast<std::uint8_t>(static_cast<unsigned>(b) * 3u);
+        }
+        return r;
+    }
+};
+
 namespace Configs {
 
-    // Minimal (Size_t only, no CRC, no PackageStart)
     struct Minimal {
         using Size_t = std::uint32_t;
     };
 
-    // PackageStart only (no CRC)
     struct SimplePackageStart {
         using Size_t                                = std::uint32_t;
         static constexpr std::uint16_t PackageStart = 0xABCD;
     };
 
-    // CRC only (UseHeaderCrc defaults to true when CRC present)
     struct SimpleCrc {
         using Crc    = MyCrc;
         using Size_t = std::uint32_t;
     };
 
-    // CRC with UseHeaderCrc explicitly disabled
     struct CrcNoHeader {
         using Crc                          = MyCrc;
         using Size_t                       = std::uint32_t;
         static constexpr bool UseHeaderCrc = false;
     };
 
-    // PackageStart + CRC (implicit UseHeaderCrc=true)
     struct Full {
         using Crc                                   = MyCrc;
         using Size_t                                = std::uint32_t;
         static constexpr std::uint16_t PackageStart = 0xABCD;
     };
 
-    // PackageStart + CRC with UseHeaderCrc=false
     struct FullNoHeaderCrc {
         using Crc                                   = MyCrc;
         using Size_t                                = std::uint32_t;
         static constexpr std::uint16_t PackageStart = 0xABCD;
         static constexpr bool          UseHeaderCrc = false;
+    };
+
+    struct WithHeaderData {
+        using Crc                                   = MyCrc;
+        using Size_t                                = std::uint32_t;
+        using HeaderData                            = std::uint8_t;
+        static constexpr std::uint16_t PackageStart = 0xABCD;
+    };
+
+    struct WithDescribedHeaderData {
+        using Crc                                   = MyCrc;
+        using Size_t                                = std::uint32_t;
+        using HeaderData                            = MsgId;
+        static constexpr std::uint16_t PackageStart = 0xABCD;
+    };
+
+    struct WithDescribedCrc {
+        using Crc                                   = MsgIdCrc;
+        using Size_t                                = std::uint32_t;
+        static constexpr std::uint16_t PackageStart = 0xABCD;
     };
 
 }   // namespace Configs
@@ -98,9 +132,41 @@ void test() {
     auto result = Packager::unpack(buffer, t_out);
 
     REQUIRE(result.has_value());
-    CHECK(buffer.size() == *result);
+    CHECK(buffer.size() == result->consumed);
     CHECK(t_in == t_out);
 }
+
+struct PacketHeader {
+    std::uint32_t id{};
+    std::uint8_t  typeId{};
+    bool          operator==(PacketHeader const&) const = default;
+};
+
+struct SensorData {
+    std::uint16_t temperature{};
+    std::uint16_t humidity{};
+    bool          operator==(SensorData const&) const = default;
+};
+
+struct CommandMsg {
+    std::uint32_t command_code{};
+    std::string   payload{};
+    bool          operator==(CommandMsg const&) const = default;
+};
+
+struct StatusReport {
+    std::uint8_t  status{};
+    std::uint64_t uptime{};
+    bool          operator==(StatusReport const&) const = default;
+};
+
+struct PacketHeaderConfig {
+    using Crc                                   = MyCrc;
+    using Size_t                                = std::uint32_t;
+    using HeaderData                            = PacketHeader;
+    static constexpr std::uint16_t PackageStart = 0xBEEF;
+};
+
 }   // namespace Test::packager
 
 TEMPLATE_LIST_TEST_CASE("Packager",
@@ -143,7 +209,7 @@ TEST_CASE("Packager pair<primitive, struct ref>",
     auto result = Packager::unpack(buffer, pair_out);
 
     REQUIRE(result.has_value());
-    CHECK(buffer.size() == *result);
+    CHECK(buffer.size() == result->consumed);
     CHECK(pair_in.first == pair_out.first);
     CHECK(pair_in.second == pair_out.second);
 }
@@ -166,7 +232,7 @@ TEST_CASE("Packager pair<primitive, variant<structs> ref>",
         auto result = Packager::unpack(buffer, pair_out);
 
         REQUIRE(result.has_value());
-        CHECK(buffer.size() == *result);
+        CHECK(buffer.size() == result->consumed);
         CHECK(pair_in.first == pair_out.first);
         CHECK(pair_in.second == pair_out.second);
     }
@@ -184,7 +250,7 @@ TEST_CASE("Packager pair<primitive, variant<structs> ref>",
         auto result = Packager::unpack(buffer, pair_out);
 
         REQUIRE(result.has_value());
-        CHECK(buffer.size() == *result);
+        CHECK(buffer.size() == result->consumed);
         CHECK(pair_in.first == pair_out.first);
         CHECK(pair_in.second == pair_out.second);
     }
@@ -202,10 +268,257 @@ TEST_CASE("Packager pair<primitive, variant<structs> ref>",
         auto result = Packager::unpack(buffer, pair_out);
 
         REQUIRE(result.has_value());
-        CHECK(buffer.size() == *result);
+        CHECK(buffer.size() == result->consumed);
         CHECK(pair_in.first == pair_out.first);
         CHECK(pair_in.second == pair_out.second);
     }
+}
+
+TEST_CASE("HeaderData: round-trip preserves injected value",
+          "[packager][headerinfo]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
+
+    std::vector<std::byte> buffer{};
+    int const              value_in = 1234;
+    std::uint8_t const     info_in  = 42;
+
+    REQUIRE(Packager::pack(buffer, value_in, info_in));
+
+    int  value_out = 0;
+    auto result    = Packager::unpack(buffer, value_out);
+
+    REQUIRE(result.has_value());
+    CHECK(result->header_data == info_in);
+    CHECK(result->consumed == buffer.size());
+    CHECK(value_out == value_in);
+}
+
+TEST_CASE("HeaderData: body corruption returns partial result with header_data",
+          "[packager][headerinfo]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
+
+    std::vector<std::byte> buffer{};
+    int const              value_in = 5678;
+    std::uint8_t const     info_in  = 7;
+
+    REQUIRE(Packager::pack(buffer, value_in, info_in));
+
+    buffer[11] ^= std::byte{0xFF};
+
+    int  value_out = 0;
+    auto result    = Packager::unpack(buffer, value_out);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().kind == aglio::UnpackErrorKind::ParseFailure);
+    CHECK(result.error().header_data == info_in);
+    CHECK(result.error().consumed == buffer.size());
+}
+
+TEST_CASE("HeaderData: existing configs still return optional<size_t>",
+          "[packager][headerinfo]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Full>;
+
+    std::vector<std::byte> buffer{};
+    int const              value_in = 99;
+
+    REQUIRE(Packager::pack(buffer, value_in));
+
+    int  value_out = 0;
+    auto result    = Packager::unpack(buffer, value_out);
+
+    static_assert(std::is_same_v<decltype(result),
+                                 std::expected<Packager::UnpackSuccess, Packager::UnpackError>>);
+    REQUIRE(result.has_value());
+    CHECK(result->consumed == buffer.size());
+    CHECK(value_out == value_in);
+}
+
+TEST_CASE("serialized_size_v compile-time values",
+          "[serializer][serialized_size]") {
+    using aglio::serialized_size_v;
+
+    static_assert(serialized_size_v<std::uint8_t, std::uint32_t> == 1);
+    static_assert(serialized_size_v<std::uint16_t, std::uint32_t> == 2);
+    static_assert(serialized_size_v<std::uint32_t, std::uint32_t> == 4);
+    static_assert(serialized_size_v<std::int64_t, std::uint32_t> == 8);
+    static_assert(serialized_size_v<float, std::uint32_t> == 4);
+    static_assert(serialized_size_v<double, std::uint32_t> == 8);
+    static_assert(serialized_size_v<bool, std::uint32_t> == 1);
+
+    static_assert(serialized_size_v<Types::Color, std::uint32_t> == sizeof(std::uint8_t));
+    static_assert(serialized_size_v<Types::Status, std::uint32_t> == sizeof(int));
+
+    static_assert(serialized_size_v<std::chrono::nanoseconds, std::uint32_t>
+                  == sizeof(std::int64_t));
+    static_assert(serialized_size_v<std::chrono::milliseconds, std::uint32_t>
+                  == sizeof(std::int64_t));
+    static_assert(serialized_size_v<std::chrono::seconds, std::uint32_t> == sizeof(std::int64_t));
+    static_assert(serialized_size_v<std::chrono::minutes, std::uint32_t> == sizeof(std::int64_t));
+    static_assert(serialized_size_v<std::chrono::hours, std::uint32_t> == sizeof(std::int64_t));
+
+    static_assert(serialized_size_v<std::pair<std::uint8_t, std::uint32_t>, std::uint32_t> == 5);
+    static_assert(serialized_size_v<std::tuple<std::uint8_t, std::uint16_t>, std::uint32_t> == 3);
+    static_assert(
+      serialized_size_v<std::tuple<std::uint8_t, std::uint16_t, std::uint32_t>, std::uint32_t>
+      == 7);
+    static_assert(serialized_size_v<std::tuple<double, double>, std::uint32_t> == 16);
+    static_assert(serialized_size_v<std::tuple<std::uint32_t>, std::uint32_t> == 4);
+    static_assert(serialized_size_v<std::pair<std::pair<std::uint8_t, std::uint8_t>, std::uint16_t>,
+                                    std::uint32_t>
+                  == 4);
+
+    static_assert(serialized_size_v<Test::packager::MsgId, std::uint32_t> == 2);
+    static_assert(serialized_size_v<Types::Empty, std::uint32_t> == 0);
+    static_assert(serialized_size_v<Types::Enum, std::uint32_t>
+                  == sizeof(std::uint8_t) + sizeof(int));
+    static_assert(serialized_size_v<Types::Chrono, std::uint32_t> == 5 * sizeof(std::int64_t));
+    static_assert(serialized_size_v<Types::Primitive, std::uint32_t> == 43);
+
+    static_assert(serialized_size_v<std::array<int, 5>, std::uint32_t> == 4 + 5 * 4);
+    static_assert(serialized_size_v<std::array<std::uint8_t, 3>, std::uint32_t> == 4 + 3);
+    static_assert(serialized_size_v<std::array<int, 0>, std::uint32_t> == 4);
+    static_assert(serialized_size_v<std::array<std::array<int, 2>, 3>, std::uint32_t>
+                  == 4 + 3 * (4 + 2 * 4));
+    static_assert(aglio::has_fixed_serialized_size<std::array<int, 5>, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<std::array<std::string, 2>, std::uint32_t>);
+
+    static_assert(aglio::has_fixed_serialized_size<std::uint32_t, std::uint32_t>);
+    static_assert(aglio::has_fixed_serialized_size<Test::packager::MsgId, std::uint32_t>);
+    static_assert(aglio::has_fixed_serialized_size<Types::Empty, std::uint32_t>);
+    static_assert(aglio::has_fixed_serialized_size<Types::Primitive, std::uint32_t>);
+    static_assert(aglio::has_fixed_serialized_size<Types::Chrono, std::uint32_t>);
+    static_assert(aglio::has_fixed_serialized_size<Types::Enum, std::uint32_t>);
+    static_assert(aglio::has_fixed_serialized_size<std::chrono::milliseconds, std::uint32_t>);
+    static_assert(aglio::has_fixed_serialized_size<std::pair<int, float>, std::uint32_t>);
+
+    static_assert(!aglio::has_fixed_serialized_size<std::vector<int>, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<std::string, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<std::map<int, int>, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<std::set<int>, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<std::optional<int>, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<std::variant<int, float>, std::uint32_t>);
+    static_assert(
+      !aglio::has_fixed_serialized_size<std::expected<int, std::string>, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<Types::Container, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<Types::Nested, std::uint32_t>);
+    static_assert(!aglio::has_fixed_serialized_size<std::pair<int, std::string>, std::uint32_t>);
+    static_assert(
+      !aglio::has_fixed_serialized_size<std::tuple<int, std::vector<int>>, std::uint32_t>);
+
+    static_assert(serialized_size_v<std::uint32_t, std::uint8_t> == 4);
+    static_assert(serialized_size_v<std::uint32_t, std::uint16_t> == 4);
+    static_assert(serialized_size_v<Types::Primitive, std::uint8_t> == 43);
+    static_assert(serialized_size_v<Types::Primitive, std::uint16_t> == 43);
+
+    CHECK(true);
+}
+
+TEST_CASE("serialized_size_v matches actual serialized byte count",
+          "[serializer][serialized_size]") {
+    auto check = [](auto const& value) {
+        using T = std::remove_cvref_t<decltype(value)>;
+        using S = std::uint32_t;
+
+        std::vector<std::byte>          buffer;
+        aglio::DynamicSerializationView ser{buffer};
+        REQUIRE(aglio::serializer<T, S>::serialize(value, ser));
+        CHECK(buffer.size() == aglio::serialized_size_v<T, S>);
+    };
+
+    SECTION("trivial") {
+        check(std::uint8_t{42});
+        check(std::uint32_t{123456});
+        check(double{3.14});
+        check(true);
+    }
+
+    SECTION("enum") {
+        check(Types::Color::Blue);
+        check(Types::Active);
+    }
+
+    SECTION("chrono") {
+        check(std::chrono::milliseconds{500});
+        check(std::chrono::nanoseconds{123456789});
+    }
+
+    SECTION("tuple-like") {
+        check(std::pair<std::uint8_t, std::uint32_t>{1, 2});
+        check(std::tuple<std::uint8_t, std::uint16_t, std::uint32_t>{1, 2, 3});
+    }
+
+    SECTION("fixed-size range") {
+        check(std::array<int, 5>{1, 2, 3, 4, 5});
+        check(std::array<std::uint8_t, 3>{10, 20, 30});
+        check(std::array<int, 0>{});
+    }
+
+    SECTION("described struct") {
+        check(Types::createDefault<Types::Primitive>());
+        check(Types::createDefault<Types::Chrono>());
+        check(Types::createDefault<Types::Enum>());
+        check(Types::createDefault<Types::Empty>());
+        check(Test::packager::MsgId{.msg_type = 7, .channel = 3});
+    }
+}
+
+TEST_CASE("WithDescribedHeaderData: round-trip preserves MsgId header_data",
+          "[packager][headerinfo][described]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithDescribedHeaderData>;
+
+    std::vector<std::byte>      buffer{};
+    int const                   value_in = 4321;
+    Test::packager::MsgId const info_in{.msg_type = 7, .channel = 3};
+
+    REQUIRE(Packager::pack(buffer, value_in, info_in));
+
+    int  value_out = 0;
+    auto result    = Packager::unpack(buffer, value_out);
+
+    REQUIRE(result.has_value());
+    CHECK(result->header_data.msg_type == info_in.msg_type);
+    CHECK(result->header_data.channel == info_in.channel);
+    CHECK(result->consumed == buffer.size());
+    CHECK(value_out == value_in);
+}
+
+TEST_CASE("WithDescribedHeaderData: body corruption returns partial result with MsgId header_data",
+          "[packager][headerinfo][described]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithDescribedHeaderData>;
+
+    std::vector<std::byte>      buffer{};
+    int const                   value_in = 8765;
+    Test::packager::MsgId const info_in{.msg_type = 11, .channel = 5};
+
+    REQUIRE(Packager::pack(buffer, value_in, info_in));
+
+    buffer[12] ^= std::byte{0xFF};
+
+    int  value_out = 0;
+    auto result    = Packager::unpack(buffer, value_out);
+
+    REQUIRE(!result.has_value());
+    CHECK(result.error().kind == aglio::UnpackErrorKind::ParseFailure);
+    CHECK(result.error().header_data.msg_type == info_in.msg_type);
+    CHECK(result.error().header_data.channel == info_in.channel);
+    CHECK(result.error().consumed == buffer.size());
+}
+
+TEST_CASE("WithDescribedCrc: round-trip succeeds with MsgId as Crc::type",
+          "[packager][described]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithDescribedCrc>;
+
+    std::vector<std::byte> buffer{};
+    int const              value_in = 99;
+
+    REQUIRE(Packager::pack(buffer, value_in));
+
+    int  value_out = 0;
+    auto result    = Packager::unpack(buffer, value_out);
+
+    REQUIRE(result.has_value());
+    CHECK(result->consumed == buffer.size());
+    CHECK(value_out == value_in);
 }
 
 TEST_CASE("pack fails gracefully when output buffer max_size is exceeded",
@@ -233,4 +546,279 @@ TEST_CASE("pack fails gracefully when output buffer max_size is exceeded",
     // string "hello" body = Size_t(4) + 5 bytes = 9 bytes → total 13 bytes → exceeds 8
     BoundedBuffer buf2{};
     CHECK(!Packager::pack(buf2, std::string{"hello"}));
+}
+
+TEST_CASE("Packager: multiple messages in one buffer",
+          "[packager]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Minimal>;
+
+    std::vector<std::byte> buffer{};
+    REQUIRE(Packager::pack(buffer, int{111}));
+    REQUIRE(Packager::pack(buffer, int{222}));
+
+    int  first  = 0;
+    auto result = Packager::unpack(buffer, first);
+    REQUIRE(result.has_value());
+    CHECK(first == 111);
+
+    auto remaining = std::span{buffer}.subspan(result->consumed);
+    int  second    = 0;
+    auto result2   = Packager::unpack(remaining, second);
+    REQUIRE(result2.has_value());
+    CHECK(second == 222);
+}
+
+TEST_CASE("Packager: truncated message returns nullopt",
+          "[packager]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Minimal>;
+
+    std::vector<std::byte> buffer{};
+    REQUIRE(Packager::pack(buffer, int{42}));
+
+    buffer.resize(buffer.size() - 2);
+
+    int  out    = 0;
+    auto result = Packager::unpack(buffer, out);
+    CHECK(!result.has_value());
+}
+
+TEST_CASE("Packager: PackageStart byte pattern in body",
+          "[packager]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Full>;
+
+    std::vector<std::uint8_t> payload = {0xCD, 0xAB, 0xCD, 0xAB};
+
+    std::vector<std::byte> buffer{};
+    REQUIRE(Packager::pack(buffer, payload));
+
+    std::vector<std::uint8_t> out;
+    auto                      result = Packager::unpack(buffer, out);
+    REQUIRE(result.has_value());
+    CHECK(out == payload);
+}
+
+struct SmallMaxConfig {
+    using Size_t                                = std::uint32_t;
+    static constexpr std::uint32_t MaxSize      = 4;
+    static constexpr std::uint16_t PackageStart = 0xABCD;
+};
+
+TEST_CASE("Packager: MaxSize exceeded rejects oversized body",
+          "[packager]") {
+    using Packager = aglio::Packager<SmallMaxConfig>;
+
+    std::vector<std::byte> buffer{};
+    Packager::pack(buffer, std::string{"hello world"});
+
+    std::string out;
+    auto        result = Packager::unpack(buffer, out);
+    CHECK(!result.has_value());
+}
+
+TEST_CASE("Packager: garbage prefix with valid message after",
+          "[packager]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Full>;
+
+    std::vector<std::byte> valid_buf{};
+    REQUIRE(Packager::pack(valid_buf, int{77}));
+
+    std::vector<std::byte> buffer{};
+    buffer.push_back(std::byte{0xCD});
+    buffer.push_back(std::byte{0xAB});
+    for(int i = 0; i < 20; ++i) { buffer.push_back(std::byte{0x00}); }
+    buffer.insert(buffer.end(), valid_buf.begin(), valid_buf.end());
+
+    int  out    = 0;
+    auto result = Packager::unpack(buffer, out);
+    REQUIRE(result.has_value());
+    CHECK(out == 77);
+}
+
+TEST_CASE("Packager: empty struct round-trip with CRC",
+          "[packager]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Full>;
+
+    Types::Empty           empty_in{};
+    std::vector<std::byte> buffer{};
+    REQUIRE(Packager::pack(buffer, empty_in));
+
+    Types::Empty empty_out{};
+    auto         result = Packager::unpack(buffer, empty_out);
+    REQUIRE(result.has_value());
+    CHECK(result->consumed == buffer.size());
+    CHECK(empty_in == empty_out);
+}
+
+TEST_CASE("validate: type-dispatched unpacking via HeaderData",
+          "[packager][validate]") {
+    using Packager = aglio::Packager<Test::packager::PacketHeaderConfig>;
+
+    SECTION("SensorData (typeId=1)") {
+        std::vector<std::byte>             buffer{};
+        Test::packager::SensorData const   data_in{.temperature = 235, .humidity = 650};
+        Test::packager::PacketHeader const hdr{.id = 100, .typeId = 1};
+
+        REQUIRE(Packager::pack(buffer, data_in, hdr));
+
+        auto pkg = Packager::validate(buffer);
+        REQUIRE(pkg.has_value());
+        CHECK(pkg->header_data == hdr);
+        CHECK(pkg->consumed == buffer.size());
+
+        auto                              body = pkg->body;
+        aglio::DynamicDeserializationView debuff{body};
+        Test::packager::SensorData        data_out{};
+        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, data_out));
+        CHECK(data_out == data_in);
+    }
+
+    SECTION("CommandMsg (typeId=2)") {
+        std::vector<std::byte>             buffer{};
+        Test::packager::CommandMsg const   msg_in{.command_code = 0xDEAD, .payload = "reboot"};
+        Test::packager::PacketHeader const hdr{.id = 200, .typeId = 2};
+
+        REQUIRE(Packager::pack(buffer, msg_in, hdr));
+
+        auto pkg = Packager::validate(buffer);
+        REQUIRE(pkg.has_value());
+        CHECK(pkg->header_data == hdr);
+        CHECK(pkg->consumed == buffer.size());
+
+        auto                              body = pkg->body;
+        aglio::DynamicDeserializationView debuff{body};
+        Test::packager::CommandMsg        msg_out{};
+        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, msg_out));
+        CHECK(msg_out == msg_in);
+    }
+
+    SECTION("StatusReport (typeId=3)") {
+        std::vector<std::byte>             buffer{};
+        Test::packager::StatusReport const report_in{.status = 1, .uptime = 86400};
+        Test::packager::PacketHeader const hdr{.id = 300, .typeId = 3};
+
+        REQUIRE(Packager::pack(buffer, report_in, hdr));
+
+        auto pkg = Packager::validate(buffer);
+        REQUIRE(pkg.has_value());
+        CHECK(pkg->header_data == hdr);
+        CHECK(pkg->consumed == buffer.size());
+
+        auto                              body = pkg->body;
+        aglio::DynamicDeserializationView debuff{body};
+        Test::packager::StatusReport      report_out{};
+        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, report_out));
+        CHECK(report_out == report_in);
+    }
+
+    SECTION("dispatch via typeId switch") {
+        std::vector<std::byte> buffer{};
+
+        Test::packager::SensorData const   sensor{.temperature = 100, .humidity = 500};
+        Test::packager::CommandMsg const   cmd{.command_code = 42, .payload = "hello"};
+        Test::packager::StatusReport const status{.status = 2, .uptime = 1000};
+
+        REQUIRE(Packager::pack(buffer, sensor, {.id = 1, .typeId = 1}));
+        REQUIRE(Packager::pack(buffer, cmd, {.id = 2, .typeId = 2}));
+        REQUIRE(Packager::pack(buffer, status, {.id = 3, .typeId = 3}));
+
+        auto remaining = std::span{buffer};
+        int  count     = 0;
+
+        for(auto pkg = Packager::validate(remaining); pkg.has_value();
+            pkg      = Packager::validate(remaining))
+        {
+            auto                              body = pkg->body;
+            aglio::DynamicDeserializationView debuff{body};
+
+            switch(pkg->header_data.typeId) {
+            case 1:
+                {
+                    Test::packager::SensorData out{};
+                    REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, out));
+                    CHECK(out == sensor);
+                    CHECK(pkg->header_data.id == 1);
+                }
+                break;
+            case 2:
+                {
+                    Test::packager::CommandMsg out{};
+                    REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, out));
+                    CHECK(out == cmd);
+                    CHECK(pkg->header_data.id == 2);
+                }
+                break;
+            case 3:
+                {
+                    Test::packager::StatusReport out{};
+                    REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, out));
+                    CHECK(out == status);
+                    CHECK(pkg->header_data.id == 3);
+                }
+                break;
+            default: FAIL("unexpected typeId");
+            }
+
+            remaining = remaining.subspan(pkg->consumed);
+            ++count;
+        }
+
+        CHECK(count == 3);
+    }
+}
+
+TEST_CASE("validate: round-trip preserves header info and body bytes",
+          "[packager][validate]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
+
+    std::vector<std::byte> buffer{};
+    int const              value_in = 1234;
+    std::uint8_t const     info_in  = 42;
+
+    REQUIRE(Packager::pack(buffer, value_in, info_in));
+
+    auto pkg = Packager::validate(buffer);
+    REQUIRE(pkg.has_value());
+    CHECK(pkg->header_data == info_in);
+    CHECK(pkg->consumed == buffer.size());
+    CHECK(!pkg->body.empty());
+
+    auto                              body_copy = pkg->body;
+    int                               value_out = 0;
+    aglio::DynamicDeserializationView debuff{body_copy};
+    REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, value_out));
+    CHECK(value_out == value_in);
+}
+
+TEST_CASE("validate: corrupted package returns nullopt",
+          "[packager][validate]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
+
+    std::vector<std::byte> buffer{};
+    int const              value_in = 5678;
+    std::uint8_t const     info_in  = 7;
+
+    REQUIRE(Packager::pack(buffer, value_in, info_in));
+
+    buffer[11] ^= std::byte{0xFF};
+
+    auto pkg = Packager::validate(buffer);
+    CHECK(!pkg.has_value());
+    CHECK(pkg.error().kind == aglio::UnpackErrorKind::ParseFailure);
+}
+
+TEST_CASE("validate: with described HeaderData",
+          "[packager][validate][described]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithDescribedHeaderData>;
+
+    std::vector<std::byte>      buffer{};
+    int const                   value_in = 4321;
+    Test::packager::MsgId const info_in{.msg_type = 7, .channel = 3};
+
+    REQUIRE(Packager::pack(buffer, value_in, info_in));
+
+    auto pkg = Packager::validate(buffer);
+    REQUIRE(pkg.has_value());
+    CHECK(pkg->header_data.msg_type == info_in.msg_type);
+    CHECK(pkg->header_data.channel == info_in.channel);
+    CHECK(pkg->consumed == buffer.size());
 }

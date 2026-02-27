@@ -185,7 +185,7 @@ struct serializer<std::variant<Ts...>, Size_t> {
         constexpr std::size_t N{sizeof...(Ts)};
         using Index_t = std::
           conditional_t<(N > std::numeric_limits<std::uint8_t>::max()), Size_t, std::uint8_t>;
-        static_assert(std::numeric_limits<Index_t>::max() >= N, "variant to big");
+        static_assert(std::numeric_limits<Index_t>::max() >= N, "variant too big");
         Index_t const index = static_cast<Index_t>(v.index());
         if(!serializer<Index_t, Size_t>::serialize(index, buffer)) { return false; }
         return std::visit(
@@ -201,7 +201,7 @@ struct serializer<std::variant<Ts...>, Size_t> {
         constexpr std::size_t N{sizeof...(Ts)};
         using Index_t = std::
           conditional_t<(N > std::numeric_limits<std::uint8_t>::max()), Size_t, std::uint8_t>;
-        static_assert(std::numeric_limits<Index_t>::max() >= N, "variant to big");
+        static_assert(std::numeric_limits<Index_t>::max() >= N, "variant too big");
         Index_t index{};
 
         if(!serializer<Index_t, Size_t>::deserialize(index, buffer)) { return false; }
@@ -371,4 +371,93 @@ struct Serializer {
         return v;
     }
 };
+
+template<typename T, typename Size_t>
+struct serialized_size;
+
+template<typename T, typename Size_t>
+concept has_fixed_serialized_size = requires {
+    { serialized_size<T, Size_t>::value } -> std::convertible_to<std::size_t>;
+};
+
+template<detail::trivial T, typename Size_t>
+struct serialized_size<T, Size_t> : std::integral_constant<std::size_t, sizeof(T)> {};
+
+template<typename Rep, typename Period, typename Size_t>
+    requires has_fixed_serialized_size<Rep, Size_t>
+struct serialized_size<std::chrono::duration<Rep, Period>, Size_t>
+  : serialized_size<Rep, Size_t> {};
+
+namespace detail {
+
+    template<typename T,
+             typename Size_t>
+    consteval bool all_tuple_elements_have_fixed_size() {
+        return []<std::size_t... Is>(std::index_sequence<Is...>) {
+            return (
+              has_fixed_serialized_size<std::remove_cvref_t<std::tuple_element_t<Is, T>>, Size_t>
+              && ...);
+        }(std::make_index_sequence<std::tuple_size_v<T>>{});
+    }
+
+    template<typename T,
+             typename Size_t>
+    consteval std::size_t tuple_serialized_size_impl() {
+        return []<std::size_t... Is>(std::index_sequence<Is...>) {
+            return (serialized_size<std::remove_cvref_t<std::tuple_element_t<Is, T>>, Size_t>::value
+                    + ... + std::size_t{0});
+        }(std::make_index_sequence<std::tuple_size_v<T>>{});
+    }
+
+    template<Described T,
+             typename Size_t>
+    consteval bool all_members_have_fixed_size() {
+        using TieType = decltype(glz::to_tie(std::declval<T&>()));
+        return []<std::size_t... Is>(std::index_sequence<Is...>) {
+            using std::get;
+            return (has_fixed_serialized_size<
+                      std::remove_cvref_t<decltype(get<Is>(std::declval<TieType>()))>,
+                      Size_t>
+                    && ...);
+        }(std::make_index_sequence<glz::reflect<T>::size>{});
+    }
+
+    template<Described T,
+             typename Size_t>
+    consteval std::size_t described_serialized_size_impl() {
+        using TieType = decltype(glz::to_tie(std::declval<T&>()));
+        return []<std::size_t... Is>(std::index_sequence<Is...>) {
+            using std::get;
+            return (serialized_size<std::remove_cvref_t<decltype(get<Is>(std::declval<TieType>()))>,
+                                    Size_t>::value
+                    + ... + std::size_t{0});
+        }(std::make_index_sequence<glz::reflect<T>::size>{});
+    }
+
+}   // namespace detail
+
+template<detail::is_tuple_like_but_not_range T, typename Size_t>
+    requires(detail::all_tuple_elements_have_fixed_size<T, Size_t>())
+struct serialized_size<T, Size_t>
+  : std::integral_constant<std::size_t, detail::tuple_serialized_size_impl<T, Size_t>()> {};
+
+template<typename T, typename Size_t>
+    requires(std::ranges::range<T> && detail::is_tuple_like<T>
+             && has_fixed_serialized_size<std::ranges::range_value_t<T>, Size_t>)
+struct serialized_size<T, Size_t>
+  : std::integral_constant<std::size_t,
+                           sizeof(Size_t)
+                             + std::tuple_size_v<T>
+                                 * serialized_size<std::ranges::range_value_t<T>, Size_t>::value> {
+};
+
+template<Described T, typename Size_t>
+    requires(detail::all_members_have_fixed_size<T, Size_t>()
+             && !detail::is_tuple_like_but_not_range<T>)
+struct serialized_size<T, Size_t>
+  : std::integral_constant<std::size_t, detail::described_serialized_size_impl<T, Size_t>()> {};
+
+template<typename T, typename Size_t>
+inline constexpr std::size_t serialized_size_v = serialized_size<T, Size_t>::value;
+
 }   // namespace aglio

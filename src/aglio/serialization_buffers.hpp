@@ -58,7 +58,7 @@ public:
 
     constexpr std::size_t size() const { return buffer_.size(); }
 
-    constexpr std::byte* data() { return buffer_.data(); }
+    constexpr auto data() { return buffer_.data(); }
 
     constexpr void skip(std::size_t length) { position_ += length; }
 
@@ -99,7 +99,8 @@ public:
 
     constexpr bool insert(std::span<std::byte const> data) {
         if(data.size_bytes() == 0) { return true; }
-        stream_.write(reinterpret_cast<char const*>(data.data()), data.size_bytes());
+        stream_.write(reinterpret_cast<char const*>(data.data()),
+                      static_cast<std::make_signed_t<std::size_t>>(data.size_bytes()));
         return !stream_.fail();
     }
 };
@@ -120,7 +121,8 @@ public:
     constexpr bool extract(std::span<std::byte> data) {
         if(data.size_bytes() == 0) { return true; }
 
-        stream_.read(reinterpret_cast<char*>(data.data()), data.size_bytes());
+        stream_.read(reinterpret_cast<char*>(data.data()),
+                     static_cast<std::make_signed_t<std::size_t>>(data.size_bytes()));
 
         return !stream_.fail();
     }

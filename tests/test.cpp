@@ -26,3 +26,4 @@ Stream& operator<<(Stream&  os,
 #include "format.hpp"
 #include "ostream.hpp"
 #include "packager.hpp"
+#include "serializer.hpp"
