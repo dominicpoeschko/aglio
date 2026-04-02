@@ -228,6 +228,19 @@ TEST_CASE("serialized_size_v compile-time values",
     CHECK(true);
 }
 
+TEST_CASE("booleans are serialized to 0 or 1", "[serializer]") {
+    std::vector<std::byte> buffer;
+    aglio::DynamicSerializationView view{buffer};
+
+    REQUIRE(aglio::serializer<bool, std::uint32_t>::serialize(true, view));
+    REQUIRE(!buffer.empty());
+    CHECK(buffer[0] == std::byte{1});
+
+    REQUIRE(aglio::serializer<bool, std::uint32_t>::serialize(false, view));
+    REQUIRE(!buffer.empty());
+    CHECK(buffer[1] == std::byte{0});
+}
+
 TEST_CASE("serialized_size_v matches actual serialized byte count",
           "[serializer][serialized_size]") {
     auto check = [](auto const& value) {
