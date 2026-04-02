@@ -68,14 +68,16 @@ namespace detail {
 template<typename T, typename Size_t>
 struct serializer;
 
-template <typename Size_t>
+template<typename Size_t>
 struct serializer<bool, Size_t> {
-    static constexpr bool serialize(bool value, auto& buffer) {
-        const std::byte data{value};
-        return buffer.insert(std::span<const std::byte, 1>{&data, std::size_t{1}});
+    static constexpr bool serialize(bool  value,
+                                    auto& buffer) {
+        std::byte const data{value};
+        return buffer.insert(std::span<std::byte const, 1>{&data, std::size_t{1}});
     }
 
-    static constexpr bool deserialize(bool& output, auto& buffer) {
+    static constexpr bool deserialize(bool& output,
+                                      auto& buffer) {
         std::byte data;
         if(buffer.extract(std::span<std::byte, 1>{&data, std::size_t{1}})) {
             output = static_cast<bool>(static_cast<std::uint32_t>(data));

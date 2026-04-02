@@ -133,9 +133,9 @@ struct std::formatter<T> {
             if(!first) { out = std::format_to(out, ", "); }
             first = false;
             out   = std::format_to(out,
-                                 "{}: {}",
-                                 glz::reflect<T>::keys[I],
-                                 glz::get<I>(glz::to_tie(v)));
+                                   "{}: {}",
+                                   glz::reflect<T>::keys[I],
+                                   glz::get<I>(glz::to_tie(v)));
         });
 
         return std::format_to(out, "}}");

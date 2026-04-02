@@ -42,9 +42,9 @@ struct fmt::formatter<T> {
             if(!first) { out = fmt::format_to(out, ", "); }
             first = false;
             out   = fmt::format_to(out,
-                                 "{}: {}",
-                                 glz::reflect<T>::keys[I],
-                                 glz::get<I>(glz::to_tie(v)));
+                                   "{}: {}",
+                                   glz::reflect<T>::keys[I],
+                                   glz::get<I>(glz::to_tie(v)));
         });
 
         return fmt::format_to(out, "}}");
