@@ -17,7 +17,7 @@ find_or_fetch_package(
     GIT_REPOSITORY
     https://github.com/catchorg/Catch2.git
     GIT_TAG
-    v3.12.0
+    v3.15.1
     GIT_BRANCH
     devel)
 
@@ -26,7 +26,7 @@ find_or_fetch_package(
     GIT_REPOSITORY
     https://github.com/fmtlib/fmt
     GIT_TAG
-    12.1.0
+    12.2.0
     GIT_BRANCH
     master)
 
@@ -52,6 +52,12 @@ endforeach()
 
 target_add_default_build_options(test_aglio PRIVATE)
 target_link_libraries(test_aglio PRIVATE aglio::aglio fmt::fmt Catch2::Catch2WithMain)
+
+# Catch2's TEST_CASE/SECTION macros expand __COUNTER__, which Clang flags as a C2y extension under -pedantic. The usage
+# is in Catch2, not our code, so silence it.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(test_aglio PRIVATE -Wno-c2y-extensions)
+endif()
 
 enable_testing()
 add_test(NAME aglio_tests COMMAND test_aglio)

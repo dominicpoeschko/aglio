@@ -1,5 +1,5 @@
 diff --git a/include/glaze/core/write.hpp b/include/glaze/core/write.hpp
-index e5bb16b3..c6994341 100644
+index e5bb16b3..735becd5 100644
 --- a/include/glaze/core/write.hpp
 +++ b/include/glaze/core/write.hpp
 @@ -94,33 +94,33 @@ namespace glz
