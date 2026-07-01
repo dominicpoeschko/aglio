@@ -1,6 +1,7 @@
 name: CI
 
 on:
+    workflow_dispatch:
     push:
         branches:
             - master
@@ -45,3 +46,44 @@ jobs:
 
             - name: Run tests
               run: cd build && ctest --output-on-failure
+
+    release:
+        if: github.event_name == 'workflow_dispatch'
+        needs: build-and-test
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+              with:
+                fetch-depth: 0
+
+            - name: Read version from CMakeLists.txt
+              id: version
+              run: |
+                version=$(grep -oP 'project\(aglio VERSION \K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)
+                if [ -z "$version" ]; then
+                  echo "::error::Could not parse version from CMakeLists.txt"; exit 1
+                fi
+                echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+            - name: Fail if tag already exists
+              run: |
+                tag="${{ steps.version.outputs.tag }}"
+                if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+                  echo "::error::Tag $tag already exists"; exit 1
+                fi
+
+            - name: Create and push tag
+              run: |
+                tag="${{ steps.version.outputs.tag }}"
+                git tag "$tag"
+                git push origin "$tag"
+
+            - name: Create GitHub release
+              env:
+                GH_TOKEN: ${{ github.token }}
+              run: |
+                tag="${{ steps.version.outputs.tag }}"
+                gh release create "$tag" --title "$tag" --generate-notes
