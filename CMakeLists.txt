@@ -31,7 +31,7 @@ if(NOT TARGET glaze_glaze)
     endif()
 endif()
 
-project(aglio VERSION 0.1.1)
+project(aglio VERSION 0.1.2)
 
 add_library(aglio INTERFACE)
 target_include_directories(aglio INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>

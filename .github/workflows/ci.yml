@@ -81,9 +81,29 @@ jobs:
                 git tag "$tag"
                 git push origin "$tag"
 
+            - name: Generate release notes from commits
+              run: |
+                tag="${{ steps.version.outputs.tag }}"
+                prev_tag=$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)
+                if [ -n "$prev_tag" ]; then
+                  range="${prev_tag}..${tag}"
+                else
+                  range="${tag}"
+                fi
+                {
+                  echo "## Changes"
+                  echo
+                  git log --no-merges --pretty=format:'- %s (%h)' "$range"
+                  echo
+                  if [ -n "$prev_tag" ]; then
+                    echo
+                    echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${prev_tag}...${tag}"
+                  fi
+                } > release-notes.md
+
             - name: Create GitHub release
               env:
                 GH_TOKEN: ${{ github.token }}
               run: |
                 tag="${{ steps.version.outputs.tag }}"
-                gh release create "$tag" --title "$tag" --generate-notes
+                gh release create "$tag" --title "$tag" --notes-file release-notes.md
