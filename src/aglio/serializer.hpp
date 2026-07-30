@@ -354,8 +354,18 @@ struct serializer<T, Size_t> {
                     v.insert(vv);
                 }
             } else {
-                for(auto& vv : v) {
-                    if(!serializer<value_t, Size_t>::deserialize(vv, buffer)) { return false; }
+                for(auto&& vv : v) {
+                    if constexpr(requires { serializer<value_t, Size_t>::deserialize(vv, buffer); })
+                    {
+                        if(!serializer<value_t, Size_t>::deserialize(vv, buffer)) { return false; }
+                    } else {
+                        // Proxy reference, as std::vector<bool> hands out: assign through it.
+                        value_t element{};
+                        if(!serializer<value_t, Size_t>::deserialize(element, buffer)) {
+                            return false;
+                        }
+                        vv = element;
+                    }
                 }
             }
             return true;

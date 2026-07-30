@@ -4,22 +4,6 @@
 
 #include <format>
 
-template<typename T>
-    requires std::is_enum_v<T>
-struct std::formatter<T> {
-    template<typename ParseContext>
-    constexpr auto parse(ParseContext& ctx) const {
-        return ctx.begin();
-    }
-
-    template<typename FormatContext>
-    auto format(T const&       v,
-                FormatContext& ctx) const {
-        using underlying = std::underlying_type_t<T>;
-        return std::format_to(ctx.out(), "{}", static_cast<underlying>(v));
-    }
-};
-
 #define AGLIO_FORMAT_DEFINE_STD
 #include <aglio/format.hpp>
 

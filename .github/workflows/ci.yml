@@ -47,9 +47,129 @@ jobs:
             - name: Run tests
               run: cd build && ctest --output-on-failure
 
+    # Longer libFuzzer run on the packager. Clang only until gcc supports -fsanitize=fuzzer.
+    fuzz:
+        runs-on: ubuntu-latest
+        container:
+            image: archlinux:latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+
+            - name: Set up C++ environment
+              run: |
+                pacman -Syu --noconfirm
+                pacman -S --noconfirm git cmake base-devel clang
+
+            - name: Configure CMake
+              run: cmake -S tests -B build
+              env:
+                CC: clang
+                CXX: clang++
+
+            - name: Build fuzz target
+              run: cmake --build build --target fuzz_packager fuzz_corpus_generator
+
+            - name: Generate seed corpus
+              run: ./build/fuzz_corpus_generator build/corpus
+
+            - name: Run fuzzer
+              run: ./build/fuzz_packager -max_total_time=300 -print_final_stats=1 build/corpus tests/corpus_regressions
+
+            # No node in the bare archlinux container, so act cannot run JS actions.
+            - name: Upload crash artifacts
+              if: failure() && !env.ACT
+              uses: actions/upload-artifact@v4
+              with:
+                name: fuzz-crashes
+                path: |
+                  crash-*
+                  leak-*
+                  timeout-*
+                  oom-*
+                if-no-files-found: ignore
+
+    # No other job compiles a single line of src/aglio/remote_fmt.hpp, which is __has_include-guarded;
+    # this one supplies the dependency. Tracks master, so it doubles as the integration canary - freeze
+    # it with -DAGLIO_REMOTE_FMT_GIT_TAG=<sha> if upstream churn becomes noisy.
+    remote-fmt:
+        runs-on: ubuntu-latest
+        container:
+            image: archlinux:latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+
+            - name: Set up C++ environment
+              run: |
+                pacman -Syu --noconfirm
+                pacman -S --noconfirm git cmake base-devel clang
+
+            - name: Configure CMake
+              run: cmake -S tests/remote_fmt -B build-remote-fmt
+              env:
+                CC: clang
+                CXX: clang++
+
+            - name: Build
+              run: cmake --build build-remote-fmt
+
+            - name: Run tests
+              run: cd build-remote-fmt && ctest --output-on-failure
+
+    # The only job that consumes aglio the way a user does: find_package against an installed copy, which is where a
+    # broken export set, a missing find_dependency or an unshipped header shows up. Uses a stock glaze rather than the
+    # patched one aglio fetches, since that is what an installing user has.
+    install:
+        runs-on: ubuntu-latest
+        container:
+            image: archlinux:latest
+        strategy:
+            fail-fast: false
+            matrix:
+                enchantum: ["ON", "OFF"]
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+
+            - name: Set up C++ environment
+              run: |
+                pacman -Syu --noconfirm
+                pacman -S --noconfirm git cmake base-devel clang
+
+            # aglio's install rules need glaze as a pre-installed config package; enchantum it fetches and installs
+            # alongside itself.
+            - name: Install glaze
+              run: |
+                git clone --depth 1 --branch v7.8.3 https://github.com/stephenberry/glaze glaze-src
+                cmake -S glaze-src -B build-glaze -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
+                cmake --install build-glaze
+
+            - name: Install aglio
+              run: >
+                cmake -S . -B build-install -DAGLIO_INSTALL=ON
+                -DAGLIO_USE_ENCHANTUM=${{ matrix.enchantum }}
+                -DCMAKE_PREFIX_PATH="$PWD/prefix" -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
+                && cmake --install build-install
+              env:
+                CC: clang
+                CXX: clang++
+
+            - name: Build and run the consumer
+              run: |
+                cmake -S tests/install -B build-consumer -DCMAKE_PREFIX_PATH="$PWD/prefix"
+                cmake --build build-consumer
+                cd build-consumer && ctest --output-on-failure
+              env:
+                CC: clang
+                CXX: clang++
+
     release:
         if: github.event_name == 'workflow_dispatch'
-        needs: build-and-test
+        needs: [build-and-test, fuzz, remote-fmt, install]
         runs-on: ubuntu-latest
         permissions:
             contents: write

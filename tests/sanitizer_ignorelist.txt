@@ -1,0 +1,6 @@
+# std::vector<bool> builds its bit masks with `~StorageType{0} << n`. Discarding the high bits of an unsigned shift is
+# well defined, but -fsanitize=unsigned-shift-base flags it, and the fuzz target makes that fatal. Scoped to this one
+# check so everything else, aglio included, stays instrumented.
+[unsigned-shift-base]
+src:*__bit_reference*
+src:*stl_bvector.h*

@@ -4,3 +4,31 @@ include(CMakeFindDependencyMacro)
 find_dependency(glaze CONFIG)
 
 include("${CMAKE_CURRENT_LIST_DIR}/aglioTargets.cmake")
+
+set(AGLIO_USE_ENCHANTUM @AGLIO_USE_ENCHANTUM@)
+
+if(AGLIO_USE_ENCHANTUM)
+    # Located by header rather than by find_package: enchantum 0.4.0 installs its config into
+    # <prefix>/cmake but its targets file into <prefix>/share/enchantum/cmake, and the config includes
+    # the latter from its own directory - so config mode is a hard error rather than a miss. It is
+    # header-only, so the include directory is all the installed aglio needs.
+    find_path(aglio_enchantum_include_dir enchantum/enchantum.hpp)
+    mark_as_advanced(aglio_enchantum_include_dir)
+
+    if(NOT aglio_enchantum_include_dir)
+        set(aglio_FOUND FALSE)
+        set(aglio_NOT_FOUND_MESSAGE
+            "aglio was built with AGLIO_USE_ENCHANTUM=ON, but the enchantum headers were not found. Install enchantum, or rebuild aglio with -DAGLIO_USE_ENCHANTUM=OFF."
+        )
+        return()
+    endif()
+
+    set_property(
+        TARGET aglio::aglio
+        APPEND
+        PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${aglio_enchantum_include_dir}")
+    set_property(
+        TARGET aglio::aglio
+        APPEND
+        PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${aglio_enchantum_include_dir}")
+endif()

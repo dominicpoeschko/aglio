@@ -1,3 +1,10 @@
 build
 .cache
 test/.cache
+
+# libFuzzer per-job logs and crash artifacts, written to the working directory
+fuzz-*.log
+crash-*
+leak-*
+timeout-*
+oom-*
