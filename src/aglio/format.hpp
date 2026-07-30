@@ -7,6 +7,12 @@
 #include <string>
 #include <type_traits>
 
+// Supplies the enum formatter std::format lacks. Macro-gated, not __has_include: a missing header
+// has to fail loudly rather than silently drop enum support.
+#ifdef AGLIO_USE_ENCHANTUM
+    #include <enchantum/std_format.hpp>
+#endif
+
 #ifdef AGLIO_FORMAT_DEFINE_STD
     #include <array>
     #include <expected>
@@ -83,7 +89,7 @@ struct std::formatter<std::expected<T, E>> {
                 FormatContext&          ctx) const {
         if(v.has_value()) {
             auto out = std::format_to(ctx.out(), "expected(");
-            out      = aglio::format::detail::print_value(out, *v);
+            if constexpr(!std::is_void_v<T>) { out = aglio::format::detail::print_value(out, *v); }
             return std::format_to(out, ")");
         } else {
             auto out = std::format_to(ctx.out(), "unexpected(");

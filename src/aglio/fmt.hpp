@@ -23,6 +23,12 @@
         #pragma clang diagnostic pop
     #endif
 
+    // Supplies the enum formatter fmt lacks. Macro-gated, not __has_include: a missing header has to
+    // fail loudly rather than silently drop enum support.
+    #ifdef AGLIO_USE_ENCHANTUM
+        #include <enchantum/fmt_format.hpp>
+    #endif
+
 template<aglio::Described T>
 struct fmt::formatter<T> {
     template<typename ParseContext>

@@ -2,7 +2,10 @@
 
 #include <array>
 #include <chrono>
+#include <cstdint>
+#include <deque>
 #include <expected>
+#include <list>
 #include <map>
 #include <optional>
 #include <set>
@@ -71,6 +74,86 @@ struct Wrapper {
     constexpr bool operator==(Wrapper const&) const = default;
 };
 
+// Float-free counterpart of Wrapper: variant, tuple and expected appear nowhere else, and a fuzzed
+// NaN would break the value-equality oracle.
+struct WrapperNoFloat {
+    std::optional<int>                   opt_some{};
+    std::optional<int>                   opt_none{};
+    std::variant<int, char, std::string> var{};
+    std::tuple<int, char, std::string>   tup{};
+    std::pair<int, std::string>          pr{};
+    std::expected<int, std::string>      exp_val{};
+    std::expected<int, std::string>      exp_err{};
+
+    constexpr bool operator==(WrapperNoFloat const&) const = default;
+};
+
+// void value type: both aglio formatters used to dereference it unconditionally.
+struct ExpectedVoid {
+    std::expected<void, std::string> ok{};
+    std::expected<void, std::string> err{};
+
+    bool operator==(ExpectedVoid const&) const = default;
+};
+
+// Ranges that take their own paths through the serializer. The byte values are printable ASCII on
+// purpose: operator<< renders std::uint8_t as a character, which the goldens document.
+struct MoreContainers {
+    std::deque<int>            deq{};
+    std::list<int>             lst{};
+    std::set<std::string>      str_set{};
+    std::array<std::string, 2> str_arr{};
+    std::vector<std::uint8_t>  bytes{};
+    // Proxy references rather than bool&, which the element deserializer assigns through.
+    std::vector<bool> flags{};
+
+    bool operator==(MoreContainers const&) const = default;
+};
+
+// Zero-length containers: the size-prefix-of-zero paths, and how an empty range renders.
+struct EmptyContainers {
+    std::vector<int>                vec{};
+    std::map<int, int>              map{};
+    std::string                     str{};
+    std::optional<std::vector<int>> opt_empty_vec{};
+
+    bool operator==(EmptyContainers const&) const = default;
+};
+
+// Wrappers nested in wrappers, plus a variant alternative that is itself a container.
+struct NestedWrappers {
+    std::optional<std::optional<int>>          opt_opt{};
+    std::optional<std::optional<int>>          opt_of_empty{};
+    std::optional<std::pair<int, std::string>> opt_pair{};
+    std::variant<int, std::vector<int>>        var_vec{};
+
+    bool operator==(NestedWrappers const&) const = default;
+};
+
+// Escapes once nested in a container. A quote and a backslash pin the rule and keep the goldens on
+// one line; whitespace escapes behave identically across all four APIs.
+struct Escapes {
+    std::string              plain{};
+    std::vector<std::string> nested{};
+
+    bool operator==(Escapes const&) const = default;
+};
+
+// Durations that are neither positive nor integral.
+struct ChronoEdge {
+    std::chrono::duration<double> secs{};
+    std::chrono::milliseconds     negative{};
+
+#ifdef __clang__
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wfloat-equal"
+#endif
+    bool operator==(ChronoEdge const&) const = default;
+#ifdef __clang__
+    #pragma clang diagnostic pop
+#endif
+};
+
 // Chrono duration types
 struct Chrono {
     std::chrono::nanoseconds  ns{};
@@ -98,6 +181,16 @@ struct Enum {
     Status status{};
 
     constexpr auto operator<=>(Enum const&) const = default;
+};
+
+// No matching enumerator, so enchantum falls back to the number; beyond its [-256, 256] default
+// range it never even scanned. Color's fixed underlying type is what makes holding these well
+// defined.
+struct EnumUnknown {
+    Color unknown{static_cast<Color>(7)};
+    Color out_of_range{static_cast<Color>(200)};
+
+    constexpr auto operator<=>(EnumUnknown const&) const = default;
 };
 
 // Empty struct (no members)
@@ -208,6 +301,65 @@ Wrapper createDefault<Wrapper>() {
 }
 
 template<>
+WrapperNoFloat createDefault<WrapperNoFloat>() {
+    return WrapperNoFloat{
+      .opt_some = 42,
+      .opt_none = std::nullopt,
+      .var      = std::string("variant_string"),
+      .tup      = {100, 'c', "tuple_str"},
+      .pr       = {200, "pair_str"},
+      .exp_val  = 99,
+      .exp_err  = std::unexpected{std::string("error_msg")}
+    };
+}
+
+template<>
+ExpectedVoid createDefault<ExpectedVoid>() {
+    return ExpectedVoid{.ok = {}, .err = std::unexpected{std::string("error_msg")}};
+}
+
+template<>
+MoreContainers createDefault<MoreContainers>() {
+    return MoreContainers{
+      .deq     = {1, 2, 3},
+      .lst     = {4, 5},
+      .str_set = {"alpha", "beta"},
+      .str_arr = {"one", "two"},
+      .bytes   = {65, 66},
+      .flags   = {true, false, true}
+    };
+}
+
+template<>
+EmptyContainers createDefault<EmptyContainers>() {
+    return EmptyContainers{.vec = {}, .map = {}, .str = {}, .opt_empty_vec = std::vector<int>{}};
+}
+
+template<>
+NestedWrappers createDefault<NestedWrappers>() {
+    return NestedWrappers{
+      .opt_opt      = std::optional<int>{7},
+      .opt_of_empty = std::optional<int>{},
+      .opt_pair     = std::pair<int, std::string>{1, "x"},
+      .var_vec      = std::vector<int>{1, 2}
+    };
+}
+
+template<>
+Escapes createDefault<Escapes>() {
+    return Escapes{
+      .plain  = R"(a"b\c)",
+      .nested = {R"(a"b)", R"(c\d)"}
+    };
+}
+
+template<>
+ChronoEdge createDefault<ChronoEdge>() {
+    return ChronoEdge{.secs     = std::chrono::duration<double>{1.5},
+                      .negative = std::chrono::milliseconds{-5}};
+}
+
+template<>
 Chrono createDefault<Chrono>() {
     return Chrono{.ns  = std::chrono::nanoseconds(123456789),
                   .ms  = std::chrono::milliseconds(12345),
@@ -232,6 +384,11 @@ Enum createDefault<Enum>() {
 }
 
 template<>
+EnumUnknown createDefault<EnumUnknown>() {
+    return EnumUnknown{};
+}
+
+template<>
 Empty createDefault<Empty>() {
     return Empty{};
 }
@@ -248,9 +405,17 @@ using List = std::tuple<Primitive,
                         Container,
                         Associative,
                         Wrapper,
+                        WrapperNoFloat,
+                        ExpectedVoid,
+                        MoreContainers,
+                        EmptyContainers,
+                        NestedWrappers,
+                        Escapes,
+                        ChronoEdge,
                         Chrono,
                         Nested,
                         Enum,
+                        EnumUnknown,
                         Empty,
                         ContiguousAssociative>;
 

@@ -1,97 +1,12 @@
 #pragma once
 
+#include "packager_configs.hpp"
 #include "types.hpp"
 
 #include <aglio/packager.hpp>
 #include <aglio/serialization_buffers.hpp>
 
 namespace Test::packager {
-
-struct MyCrc {
-    using type = std::uint32_t;
-
-    static type calc(std::span<std::byte const> data) {
-        type crc = 0;
-        for(auto b : data) { crc += static_cast<type>(b); }
-        return crc;
-    }
-};
-
-struct MsgId {
-    std::uint8_t msg_type{};
-    std::uint8_t channel{};
-    bool         operator==(MsgId const&) const = default;
-};
-
-struct MsgIdCrc {
-    using type = MsgId;
-
-    static type calc(std::span<std::byte const> data) {
-        type r{};
-        for(auto b : data) {
-            r.msg_type += static_cast<std::uint8_t>(b);
-            r.channel += static_cast<std::uint8_t>(static_cast<unsigned>(b) * 3u);
-        }
-        return r;
-    }
-};
-
-namespace Configs {
-
-    struct Minimal {
-        using Size_t = std::uint32_t;
-    };
-
-    struct SimplePackageStart {
-        using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
-    };
-
-    struct SimpleCrc {
-        using Crc    = MyCrc;
-        using Size_t = std::uint32_t;
-    };
-
-    struct CrcNoHeader {
-        using Crc                          = MyCrc;
-        using Size_t                       = std::uint32_t;
-        static constexpr bool UseHeaderCrc = false;
-    };
-
-    struct Full {
-        using Crc                                   = MyCrc;
-        using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
-    };
-
-    struct FullNoHeaderCrc {
-        using Crc                                   = MyCrc;
-        using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
-        static constexpr bool          UseHeaderCrc = false;
-    };
-
-    struct WithHeaderData {
-        using Crc                                   = MyCrc;
-        using Size_t                                = std::uint32_t;
-        using HeaderData                            = std::uint8_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
-    };
-
-    struct WithDescribedHeaderData {
-        using Crc                                   = MyCrc;
-        using Size_t                                = std::uint32_t;
-        using HeaderData                            = MsgId;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
-    };
-
-    struct WithDescribedCrc {
-        using Crc                                   = MsgIdCrc;
-        using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
-    };
-
-}   // namespace Configs
 
 template<typename T, typename TTuple>
 struct product_one_trait;
@@ -500,15 +415,9 @@ TEST_CASE("Packager: PackageStart byte pattern in body",
     CHECK(out == payload);
 }
 
-struct SmallMaxConfig {
-    using Size_t                                = std::uint32_t;
-    static constexpr std::uint32_t MaxSize      = 4;
-    static constexpr std::uint16_t PackageStart = 0xABCD;
-};
-
 TEST_CASE("Packager: MaxSize exceeded rejects oversized body",
           "[packager]") {
-    using Packager = aglio::Packager<SmallMaxConfig>;
+    using Packager = aglio::Packager<Test::packager::Configs::SmallMax>;
 
     std::vector<std::byte> buffer{};
     Packager::pack(buffer, std::string{"hello world"});

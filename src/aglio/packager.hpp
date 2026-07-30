@@ -472,15 +472,15 @@ namespace detail {
 
                 auto const consumed = buffer.size() - span.size();
 
-                if(!result->body_crc_valid) {
-                    if constexpr(Config::UseHeaderData) {
+                // find_valid_package only reports a bad body CRC for HeaderData configs; the others
+                // resynchronize inside it.
+                if constexpr(Config::UseHeaderData) {
+                    if(!result->body_crc_valid) {
                         UnpackError err;
                         err.kind        = UnpackErrorKind::ParseFailure;
                         err.consumed    = consumed;
                         err.header_data = result->header_data;
                         return std::unexpected(err);
-                    } else {
-                        continue;
                     }
                 }
 

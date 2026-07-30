@@ -5,6 +5,15 @@
 #include <ranges>
 #include <string_view>
 
+// Supplies the enum operator<< iostreams lacks. Macro-gated, not __has_include: a missing header has
+// to fail loudly. enchantum keeps the operator in a namespace, and the using-declaration has to
+// precede the templates below so their unqualified `os << value` finds it.
+#ifdef AGLIO_USE_ENCHANTUM
+    #include <enchantum/iostream.hpp>
+
+using enchantum::iostream_operators::operator<<;
+#endif
+
 #ifdef AGLIO_OSTREAM_DEFINE_STD
     #include <array>
     #include <expected>
@@ -269,7 +278,7 @@ Stream& operator<<(Stream&                 os,
                                  E> const& v) {
     if(v.has_value()) {
         os << "expected(";
-        aglio::ostream::detail::print_value(os, *v);
+        if constexpr(!std::is_void_v<T>) { aglio::ostream::detail::print_value(os, *v); }
         os << ")";
     } else {
         os << "unexpected(";

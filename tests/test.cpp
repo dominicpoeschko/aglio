@@ -1,14 +1,7 @@
-#include <type_traits>
-
-template<typename Stream,
-         typename T>
-    requires std::is_enum_v<T>
-Stream& operator<<(Stream&  os,
-                   T const& v) {
-    using underlying = std::underlying_type_t<T>;
-    os << static_cast<int>(static_cast<underlying>(v));
-    return os;
-}
+// The goldens expect enums printed by name, which needs enchantum's formatters.
+#ifndef AGLIO_USE_ENCHANTUM
+    #error "the aglio test suite requires AGLIO_USE_ENCHANTUM"
+#endif
 
 #define AGLIO_OSTREAM_DEFINE_STD
 #include <aglio/ostream.hpp>

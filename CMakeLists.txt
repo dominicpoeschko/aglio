@@ -31,13 +31,49 @@ if(NOT TARGET glaze_glaze)
     endif()
 endif()
 
-project(aglio VERSION 0.1.2)
+project(aglio VERSION 0.2.0)
 
 add_library(aglio INTERFACE)
 target_include_directories(aglio INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
                                            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_link_libraries(aglio INTERFACE glaze::glaze)
 add_library(aglio::aglio ALIAS aglio)
+
+# Off drops the dependency, at the cost of enums not printing at all. Also turn it off if you define your own enum
+# formatters: enchantum's match every enum, so a second one for the same type is ambiguous.
+option(AGLIO_USE_ENCHANTUM "Print enums by name in the fmt, std::format and ostream output" ON)
+
+if(AGLIO_USE_ENCHANTUM)
+    # Located by header, not by find_package: enchantum 0.4.0 installs its config into <prefix>/cmake but its targets
+    # file into <prefix>/share/enchantum/cmake, and the config includes the latter from its own directory - so config
+    # mode is a hard error rather than a miss whenever an installed copy is present. aglioConfig.cmake.in does the same
+    # for consumers. A parent project that already provides the target wins over both.
+    if(NOT TARGET enchantum::enchantum)
+        find_path(aglio_enchantum_include_dir enchantum/enchantum.hpp)
+        mark_as_advanced(aglio_enchantum_include_dir)
+
+        if(NOT aglio_enchantum_include_dir)
+            include(FetchContent)
+
+            # Pinned to the version remote_fmt uses, so a project pulling in both gets a single copy.
+            FetchContent_Declare(
+                enchantum
+                GIT_REPOSITORY https://github.com/ZXShady/enchantum
+                GIT_TAG 0.4.0
+                SYSTEM)
+
+            FetchContent_MakeAvailable(enchantum)
+        endif()
+    endif()
+
+    if(TARGET enchantum::enchantum)
+        target_link_libraries(aglio INTERFACE $<BUILD_INTERFACE:enchantum::enchantum>)
+    else()
+        target_include_directories(aglio SYSTEM INTERFACE $<BUILD_INTERFACE:${aglio_enchantum_include_dir}>)
+    endif()
+
+    target_compile_definitions(aglio INTERFACE AGLIO_USE_ENCHANTUM)
+endif()
 
 # Install/export support so this can be `cmake --install`ed and consumed elsewhere via find_package(aglio). Off by
 # default when aglio is added as a subdirectory / FetchContent'd, so it doesn't pollute the parent project's install
