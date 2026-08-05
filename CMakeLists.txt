@@ -5,7 +5,11 @@ if(TARGET aglio)
 endif()
 
 if(NOT TARGET glaze_glaze)
-    find_package(glaze QUIET)
+    # USE_FORCE_FETCH (see cmake_helpers/FindOrFetch.cmake) guarantees fetched sources even when the package is
+    # installed system-wide - dependency packaging relies on that, so skip the probe.
+    if(NOT USE_FORCE_FETCH)
+        find_package(glaze QUIET)
+    endif()
     if(NOT glaze_FOUND)
         include(FetchContent)
 
@@ -31,7 +35,7 @@ if(NOT TARGET glaze_glaze)
     endif()
 endif()
 
-project(aglio VERSION 0.2.2)
+project(aglio VERSION 0.2.3)
 
 add_library(aglio INTERFACE)
 target_include_directories(aglio INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -49,8 +53,11 @@ if(AGLIO_USE_ENCHANTUM)
     # mode is a hard error rather than a miss whenever an installed copy is present. aglioConfig.cmake.in does the same
     # for consumers. A parent project that already provides the target wins over both.
     if(NOT TARGET enchantum::enchantum)
-        find_path(aglio_enchantum_include_dir enchantum/enchantum.hpp)
-        mark_as_advanced(aglio_enchantum_include_dir)
+        # Skipped under USE_FORCE_FETCH for the same reason as the glaze probe above.
+        if(NOT USE_FORCE_FETCH)
+            find_path(aglio_enchantum_include_dir enchantum/enchantum.hpp)
+            mark_as_advanced(aglio_enchantum_include_dir)
+        endif()
 
         if(NOT aglio_enchantum_include_dir)
             include(FetchContent)
