@@ -8,3 +8,4 @@ crash-*
 leak-*
 timeout-*
 oom-*
+justfile

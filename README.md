@@ -102,6 +102,17 @@ if(auto res = Packager::unpack(wire, out)) {   // std::expected<UnpackSuccess, U
 }
 ```
 
+`pack` appends to the buffer and returns `false` when the package does not fit, leaving the
+buffer as it was. The buffer can be a `std::vector<std::byte>` or one of fixed capacity — a
+static vector whose `max_size()` and `capacity()` are static and equal, such as
+`std::inplace_vector<std::byte, N>`. A fixed one is written in place, without a resize per field;
+if it also has `std::string`'s `resize_and_overwrite(n, op)`, nothing in it is filled first.
+
+A type whose serialized size is fixed (`aglio::has_fixed_serialized_size`: numbers, enums, arrays
+and structs of them) costs one bounds check however many fields it has. If you specialize
+`aglio::serializer` for a type of your own, specialize `aglio::serialized_size` with it where the
+size is fixed; it has to be the number of bytes the serializer writes, or packing the type fails.
+
 ### JSON
 
 ```cpp

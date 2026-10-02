@@ -5,6 +5,7 @@
 #include "fuzz_cases.hpp"
 
 #include <aglio/packager.hpp>
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +35,51 @@ struct BoundedBuffer {
 
     void resize(std::size_t n) { sz = n; }
 };
+
+// pack() destination with a compile-time capacity (max_size() == capacity(), both static).
+template<std::size_t N>
+struct FixedBuffer {
+    std::array<std::byte, N> storage{};
+    std::size_t              sz{};
+
+    static constexpr std::size_t capacity() { return N; }
+
+    static constexpr std::size_t max_size() { return N; }
+
+    std::size_t size() const { return sz; }
+
+    std::byte* data() { return storage.data(); }
+
+    auto begin() { return std::span{storage}.first(sz).begin(); }
+
+    auto end() { return std::span{storage}.first(sz).end(); }
+
+    std::byte& operator[](std::size_t i) { return storage[i]; }
+
+    void resize(std::size_t n) {
+        if(n > N) { std::abort(); }
+        for(std::size_t i = sz; i < n; ++i) {
+            storage[i] = std::byte{0x5A};
+        }   // not zero: a gap shows
+        sz = n;
+    }
+};
+
+// The same with resize_and_overwrite, which the packager then writes through instead of resize().
+template<std::size_t N>
+struct RawFixedBuffer : FixedBuffer<N> {
+    template<typename Op>
+    void resize_and_overwrite(std::size_t n,
+                              Op&&        op) {
+        if(n > N) { std::abort(); }
+        std::size_t const kept = op(this->storage.data(), n);
+        if(kept > n) { std::abort(); }
+        this->sz = kept;
+    }
+};
+
+static_assert(aglio::detail::fixed_capacity_v<FixedBuffer<8>>);
+static_assert(aglio::detail::overwritable<RawFixedBuffer<8>>);
 
 template<typename Case,
          typename T>
@@ -66,6 +112,32 @@ bool pack_like(Buffer&                    buffer,
 // That works for floats too, where a fuzzed pattern can be a NaN (never equal to itself) or a signed
 // zero (equal to +0.0 while the bytes differ). Value equality is asserted on top where meaningful.
 template<typename Case,
+         typename Fixed,
+         typename Result>
+void check_fixed(typename Case::Type const&    value,
+                 Result const&                 result,
+                 std::vector<std::byte> const& want,
+                 std::size_t                   prefix) {
+    constexpr std::size_t N = Fixed::capacity();
+    Fixed                 fixed{};
+    fixed.FixedBuffer<N>::resize(prefix);
+    for(std::size_t i = 0; i < prefix; ++i) { fixed.storage[i] = std::byte(0xC0 + i); }
+    bool const ok = pack_like<Case>(fixed, value, result);
+    if(ok != (prefix + want.size() <= N)) { std::abort(); }
+    if(!ok && fixed.size() != prefix) { std::abort(); }
+    if(ok) {
+        if(fixed.size() != prefix + want.size()) { std::abort(); }
+        if(!std::equal(want.begin(), want.end(), std::span{fixed.storage}.subspan(prefix).begin()))
+        {
+            std::abort();
+        }
+    }
+    for(std::size_t i = 0; i < prefix; ++i) {
+        if(fixed.storage[i] != std::byte(0xC0 + i)) { std::abort(); }
+    }
+}
+
+template<typename Case,
          typename Result>
 void check_round_trip(typename Case::Type const& value,
                       Result const&              result) {
@@ -90,6 +162,13 @@ void check_round_trip(typename Case::Type const& value,
     std::vector<std::byte> second{};
     if(!pack_like<Case>(second, again, *againResult)) { std::abort(); }
     if(first != second) { std::abort(); }
+
+    // A fixed-capacity buffer gives the same package behind what it already holds, and fits it
+    // exactly when the vector's package fits in the room left; a failure leaves it as it was.
+    check_fixed<Case, FixedBuffer<4096>>(again, *againResult, first, 3);
+    check_fixed<Case, RawFixedBuffer<64>>(again, *againResult, first, 5);
+    check_fixed<Case, FixedBuffer<64>>(again, *againResult, first, 5);
+    check_fixed<Case, RawFixedBuffer<4096>>(again, *againResult, first, 3);
 }
 
 template<typename Case>

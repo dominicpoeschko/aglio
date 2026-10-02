@@ -144,7 +144,7 @@ jobs:
             # alongside itself.
             - name: Install glaze
               run: |
-                git clone --depth 1 --branch v7.8.3 https://github.com/stephenberry/glaze glaze-src
+                git clone --depth 1 --branch v9.0.0 https://github.com/stephenberry/glaze glaze-src
                 cmake -S glaze-src -B build-glaze -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
                 cmake --install build-glaze
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "inline.hpp"
 #include "type_descriptor.hpp"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <optional>
 #include <ranges>
@@ -68,16 +70,117 @@ namespace detail {
 template<typename T, typename Size_t>
 struct serializer;
 
+template<typename T, typename Size_t>
+struct serialized_size;
+
+template<typename T, typename Size_t>
+concept has_fixed_serialized_size = requires {
+    { serialized_size<T, Size_t>::value } -> std::convertible_to<std::size_t>;
+};
+
+namespace detail {
+
+    /// The N bytes claimed for a value of fixed serialized size: one bounds check for the whole
+    /// value instead of one per field.
+    template<std::size_t N>
+    struct ClaimedForWrite {
+        std::byte*  to;
+        std::size_t used{};
+
+        template<std::size_t M>
+            requires(M != std::dynamic_extent)
+        AGLIO_INLINE constexpr bool insert(std::span<std::byte const,
+                                                     M> data) {
+            if constexpr(M != 0) {
+                if(M > N - used) { return false; }
+                copy_fixed<M>(std::next(to, static_cast<std::make_signed_t<std::size_t>>(used)),
+                              data.data());
+                used += M;
+            }
+            return true;
+        }
+
+        constexpr bool insert(std::span<std::byte const> data) {
+            if(data.size() > N - used) { return false; }
+            if(!data.empty()) {
+                std::memcpy(std::next(to, static_cast<std::make_signed_t<std::size_t>>(used)),
+                            data.data(),
+                            data.size());
+                used += data.size();
+            }
+            return true;
+        }
+    };
+
+    /// The same for reading.
+    template<std::size_t N>
+    struct ClaimedForRead {
+        std::byte const* from;
+        std::size_t      used{};
+
+        /// What a range's length is checked against.
+        static constexpr std::size_t size() { return N; }
+
+        template<std::size_t M>
+            requires(M != std::dynamic_extent)
+        AGLIO_INLINE constexpr bool extract(std::span<std::byte,
+                                                      M> data) {
+            if constexpr(M != 0) {
+                if(M > N - used) { return false; }
+                copy_fixed<M>(data.data(),
+                              std::next(from, static_cast<std::make_signed_t<std::size_t>>(used)));
+                used += M;
+            }
+            return true;
+        }
+
+        constexpr bool extract(std::span<std::byte> data) {
+            if(data.size() > N - used) { return false; }
+            if(!data.empty()) {
+                std::memcpy(data.data(),
+                            std::next(from, static_cast<std::make_signed_t<std::size_t>>(used)),
+                            data.size());
+                used += data.size();
+            }
+            return true;
+        }
+    };
+
+    template<typename Buffer>
+    constexpr bool is_claimed_v = false;
+    template<std::size_t N>
+    constexpr bool is_claimed_v<ClaimedForWrite<N>> = true;
+    template<std::size_t N>
+    constexpr bool is_claimed_v<ClaimedForRead<N>> = true;
+
+    /// A value of fixed, non-zero serialized size and a buffer with claim(n) that is not already
+    /// a claim (nested fixed-size values go through the outer one).
+    template<typename T, typename Size_t, typename Buffer>
+    concept claims_write
+      = has_fixed_serialized_size<T, Size_t> && (serialized_size<T, Size_t>::value != 0)
+     && !is_claimed_v<Buffer> && requires(Buffer& b) {
+            { b.claim(std::size_t{}) } -> std::same_as<std::byte*>;
+        };
+
+    template<typename T, typename Size_t, typename Buffer>
+    concept claims_read
+      = has_fixed_serialized_size<T, Size_t> && (serialized_size<T, Size_t>::value != 0)
+     && !is_claimed_v<Buffer> && requires(Buffer& b) {
+            { b.claim(std::size_t{}) } -> std::same_as<std::byte const*>;
+        };
+
+}   // namespace detail
+
 template<typename Size_t>
 struct serializer<bool, Size_t> {
-    static constexpr bool serialize(bool  value,
-                                    auto& buffer) {
+    AGLIO_INLINE static constexpr bool serialize(bool  value,
+                                                 auto& buffer) {
         std::byte const data{value};
         return buffer.insert(std::span<std::byte const, 1>{&data, std::size_t{1}});
     }
 
-    static constexpr bool deserialize(bool& output,
-                                      auto& buffer) {
+    AGLIO_INLINE static constexpr bool deserialize(bool& output,
+                                                   auto& buffer) {
         std::byte data;
         if(buffer.extract(std::span<std::byte, 1>{&data, std::size_t{1}})) {
             output = static_cast<bool>(static_cast<std::uint32_t>(data));
@@ -90,14 +193,14 @@ struct serializer<bool, Size_t> {
 template<detail::trivial T, typename Size_t>
 struct serializer<T, Size_t> {
     template<typename Buffer>
-    static constexpr bool serialize(T const& v,
-                                    Buffer&  buffer) {
+    AGLIO_INLINE static constexpr bool serialize(T const& v,
+                                                 Buffer&  buffer) {
         return buffer.insert(std::as_bytes(std::span<T const, 1>{std::addressof(v), 1}));
     }
 
     template<typename Buffer>
-    static constexpr bool deserialize(T&      v,
-                                      Buffer& buffer) {
+    AGLIO_INLINE static constexpr bool deserialize(T&      v,
+                                                   Buffer& buffer) {
         return buffer.extract(std::as_writable_bytes(std::span<T, 1>{std::addressof(v), 1}));
     }
 };
@@ -110,45 +213,78 @@ struct serializer<T, Size_t> {
       "This can happen with reference members. Provide a custom aglio::serializer specialization.");
 
     template<typename Buffer>
-    static constexpr bool serialize(T const& v,
-                                    Buffer&  buffer) {
-        auto const tie = glz::to_tie(v);
-        return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            using std::get;
-            return (serializer<std::remove_cvref_t<decltype(get<Is>(tie))>, Size_t>::serialize(
-                      get<Is>(tie),
-                      buffer)
-                    && ...);
-        }(std::make_index_sequence<glz::reflect<T>::size>{});
+    AGLIO_INLINE static constexpr bool serialize(T const& v,
+                                                 Buffer&  buffer) {
+        constexpr auto Members = std::make_index_sequence<glz::reflect<T>::size>{};
+        if constexpr(detail::claims_write<T, Size_t, Buffer>) {
+            constexpr std::size_t N  = serialized_size<T, Size_t>::value;
+            std::byte* const      to = buffer.claim(N);
+            if(to == nullptr) { return false; }
+            detail::ClaimedForWrite<N> claimed{to};
+            // A serialized_size that is not what the serializers write is a failure, never a gap.
+            return serializeMembers(glz::to_tie(v), claimed, Members) && claimed.used == N;
+        } else {
+            return serializeMembers(glz::to_tie(v), buffer, Members);
+        }
     }
 
     template<typename Buffer>
-    static constexpr bool deserialize(T&      v,
-                                      Buffer& buffer) {
-        auto tie = glz::to_tie(v);
-        return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            using std::get;
-            return (serializer<std::remove_cvref_t<decltype(get<Is>(tie))>, Size_t>::deserialize(
-                      get<Is>(tie),
-                      buffer)
-                    && ...);
-        }(std::make_index_sequence<glz::reflect<T>::size>{});
+    AGLIO_INLINE static constexpr bool deserialize(T&      v,
+                                                   Buffer& buffer) {
+        constexpr auto Members = std::make_index_sequence<glz::reflect<T>::size>{};
+        if constexpr(detail::claims_read<T, Size_t, Buffer>) {
+            constexpr std::size_t  N    = serialized_size<T, Size_t>::value;
+            std::byte const* const from = buffer.claim(N);
+            if(from == nullptr) { return false; }
+            detail::ClaimedForRead<N> claimed{from};
+            return deserializeMembers(glz::to_tie(v), claimed, Members) && claimed.used == N;
+        } else {
+            return deserializeMembers(glz::to_tie(v), buffer, Members);
+        }
+    }
+
+private:
+    // Functions, not lambdas: a lambda cannot be forced inline portably.
+    template<typename Tie,
+             typename Buffer,
+             std::size_t... Is>
+    AGLIO_INLINE static constexpr bool serializeMembers(Tie const& tie,
+                                                        Buffer&    buffer,
+                                                        std::index_sequence<Is...>) {
+        using std::get;
+        return (
+          serializer<std::remove_cvref_t<decltype(get<Is>(tie))>, Size_t>::serialize(get<Is>(tie),
+                                                                                     buffer)
+          && ...);
+    }
+
+    template<typename Tie,
+             typename Buffer,
+             std::size_t... Is>
+    AGLIO_INLINE static constexpr bool deserializeMembers(Tie&&   tie,
+                                                          Buffer& buffer,
+                                                          std::index_sequence<Is...>) {
+        using std::get;
+        return (
+          serializer<std::remove_cvref_t<decltype(get<Is>(tie))>, Size_t>::deserialize(get<Is>(tie),
+                                                                                       buffer)
+          && ...);
     }
 };
 
 template<typename T, typename Size_t>
 struct serializer<std::optional<T>, Size_t> {
     template<typename Buffer>
-    static constexpr bool serialize(std::optional<T> const& v,
-                                    Buffer&                 buffer) {
+    AGLIO_INLINE static constexpr bool serialize(std::optional<T> const& v,
+                                                 Buffer&                 buffer) {
         if(!serializer<bool, Size_t>::serialize(v.has_value(), buffer)) { return false; }
         if(v.has_value()) { return serializer<T, Size_t>::serialize(*v, buffer); }
         return true;
     }
 
     template<typename Buffer>
-    static constexpr bool deserialize(std::optional<T>& v,
-                                      Buffer&           buffer) {
+    AGLIO_INLINE static constexpr bool deserialize(std::optional<T>& v,
+                                                   Buffer&           buffer) {
         bool has_value{};
         if(!serializer<bool, Size_t>::deserialize(has_value, buffer)) { return false; }
         if(has_value) {
@@ -163,9 +299,9 @@ struct serializer<std::optional<T>, Size_t> {
 template<typename T, typename E, typename Size_t>
 struct serializer<std::expected<T, E>, Size_t> {
     template<typename Buffer>
-    static constexpr bool serialize(std::expected<T,
-                                                  E> const& v,
-                                    Buffer&                 buffer) {
+    AGLIO_INLINE static constexpr bool serialize(std::expected<T,
+                                                               E> const& v,
+                                                 Buffer&                 buffer) {
         if(!serializer<bool, Size_t>::serialize(v.has_value(), buffer)) { return false; }
         if(v.has_value()) {
             if constexpr(!std::is_void_v<T>) {
@@ -177,9 +313,9 @@ struct serializer<std::expected<T, E>, Size_t> {
     }
 
     template<typename Buffer>
-    static constexpr bool deserialize(std::expected<T,
-                                                    E>& v,
-                                      Buffer&           buffer) {
+    AGLIO_INLINE static constexpr bool deserialize(std::expected<T,
+                                                                 E>& v,
+                                                   Buffer&           buffer) {
         bool has_value{};
         if(!serializer<bool, Size_t>::deserialize(has_value, buffer)) { return false; }
         if(has_value) {
@@ -199,8 +335,8 @@ struct serializer<std::expected<T, E>, Size_t> {
 template<typename... Ts, typename Size_t>
 struct serializer<std::variant<Ts...>, Size_t> {
     template<typename Buffer>
-    static constexpr bool serialize(std::variant<Ts...> const& v,
-                                    Buffer&                    buffer) {
+    AGLIO_INLINE static constexpr bool serialize(std::variant<Ts...> const& v,
+                                                 Buffer&                    buffer) {
         constexpr std::size_t N{sizeof...(Ts)};
         using Index_t = std::
           conditional_t<(N > std::numeric_limits<std::uint8_t>::max()), Size_t, std::uint8_t>;
@@ -215,8 +351,8 @@ struct serializer<std::variant<Ts...>, Size_t> {
     }
 
     template<typename Buffer>
-    static constexpr bool deserialize(std::variant<Ts...>& v,
-                                      Buffer&              buffer) {
+    AGLIO_INLINE static constexpr bool deserialize(std::variant<Ts...>& v,
+                                                   Buffer&              buffer) {
         constexpr std::size_t N{sizeof...(Ts)};
         using Index_t = std::
           conditional_t<(N > std::numeric_limits<std::uint8_t>::max()), Size_t, std::uint8_t>;
@@ -245,16 +381,16 @@ struct serializer<std::variant<Ts...>, Size_t> {
 template<typename Rep, typename Period, typename Size_t>
 struct serializer<std::chrono::duration<Rep, Period>, Size_t> {
     template<typename Buffer>
-    static constexpr bool serialize(std::chrono::duration<Rep,
-                                                          Period> const& v,
-                                    Buffer&                              buffer) {
+    AGLIO_INLINE static constexpr bool serialize(std::chrono::duration<Rep,
+                                                                       Period> const& v,
+                                                 Buffer&                              buffer) {
         return serializer<Rep, Size_t>::serialize(v.count(), buffer);
     }
 
     template<typename Buffer>
-    static constexpr bool deserialize(std::chrono::duration<Rep,
-                                                            Period>& v,
-                                      Buffer&                        buffer) {
+    AGLIO_INLINE static constexpr bool deserialize(std::chrono::duration<Rep,
+                                                                         Period>& v,
+                                                   Buffer&                        buffer) {
         Rep vv;
         if(!serializer<Rep, Size_t>::deserialize(vv, buffer)) { return false; }
         v = std::chrono::duration<Rep, Period>{vv};
@@ -265,8 +401,8 @@ struct serializer<std::chrono::duration<Rep, Period>, Size_t> {
 template<detail::is_tuple_like_but_not_range T, typename Size_t>
 struct serializer<T, Size_t> {
     template<typename Buffer>
-    static constexpr bool serialize(T const& v,
-                                    Buffer&  buffer) {
+    AGLIO_INLINE static constexpr bool serialize(T const& v,
+                                                 Buffer&  buffer) {
         return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             using std::get;
             return (serializer<std::remove_cvref_t<std::tuple_element_t<Is, T>>, Size_t>::serialize(
@@ -277,8 +413,8 @@ struct serializer<T, Size_t> {
     }
 
     template<typename Buffer>
-    static constexpr bool deserialize(T&      v,
-                                      Buffer& buffer) {
+    AGLIO_INLINE static constexpr bool deserialize(T&      v,
+                                                   Buffer& buffer) {
         return [&]<std::size_t... Is>(std::index_sequence<Is...>) {
             using std::get;
             return (
@@ -399,14 +535,6 @@ struct Serializer {
         }
         return v;
     }
-};
-
-template<typename T, typename Size_t>
-struct serialized_size;
-
-template<typename T, typename Size_t>
-concept has_fixed_serialized_size = requires {
-    { serialized_size<T, Size_t>::value } -> std::convertible_to<std::size_t>;
 };
 
 template<detail::trivial T, typename Size_t>

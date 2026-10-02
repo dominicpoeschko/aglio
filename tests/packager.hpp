@@ -50,6 +50,122 @@ void test() {
     CHECK(t_in == t_out);
 }
 
+/// A buffer whose max_size() is its capacity, known at compile time.
+template<std::size_t N>
+struct FixedBuffer {
+    std::array<std::byte, N> storage{};
+    std::size_t              used{};
+
+    static constexpr std::size_t capacity() { return N; }
+
+    static constexpr std::size_t max_size() { return N; }
+
+    std::size_t size() const { return used; }
+
+    void resize(std::size_t n) {
+        REQUIRE(n <= N);
+        for(std::size_t i = used; i < n; ++i) { storage[i] = std::byte{}; }
+        used = n;
+    }
+
+    std::span<std::byte> bytes() { return std::span{storage}.first(used); }
+
+    std::span<std::byte const> bytes() const { return std::span{storage}.first(used); }
+
+    std::byte* data() { return storage.data(); }
+
+    std::byte const* data() const { return storage.data(); }
+
+    auto begin() { return bytes().begin(); }
+
+    auto end() { return bytes().end(); }
+
+    auto begin() const { return bytes().begin(); }
+
+    auto end() const { return bytes().end(); }
+
+    std::byte& operator[](std::size_t i) { return storage[i]; }
+};
+
+/// The same with std::string's resize_and_overwrite. Growing it by resize() is an error.
+template<std::size_t N>
+struct RawFixedBuffer : FixedBuffer<N> {
+    void resize(std::size_t n) {
+        REQUIRE(n <= this->used);
+        this->used = n;
+    }
+
+    template<typename Op>
+    void resize_and_overwrite(std::size_t n,
+                              Op&&        op) {
+        REQUIRE(n <= N);
+        std::size_t const kept = op(this->storage.data(), n);
+        REQUIRE(kept <= n);
+        this->used = kept;
+    }
+};
+
+/// A fixed-capacity buffer with no begin()/end(): data() and size() are all the window needs.
+template<std::size_t N>
+struct BareFixedBuffer {
+    std::array<std::byte, N> storage{};
+    std::size_t              used{};
+
+    static constexpr std::size_t capacity() { return N; }
+
+    static constexpr std::size_t max_size() { return N; }
+
+    std::size_t size() const { return used; }
+
+    void resize(std::size_t n) {
+        REQUIRE(n <= N);
+        used = n;
+    }
+
+    std::byte* data() { return storage.data(); }
+};
+
+static_assert(aglio::detail::fixed_capacity_v<FixedBuffer<8>>);
+static_assert(!aglio::detail::fixed_capacity_v<std::vector<std::byte>>);
+static_assert(aglio::detail::sized_once<FixedBuffer<8>>);
+static_assert(aglio::detail::sized_once<RawFixedBuffer<8>>);
+static_assert(aglio::detail::sized_once<BareFixedBuffer<8>>);
+static_assert(!aglio::detail::overwritable<FixedBuffer<8>>);
+static_assert(aglio::detail::overwritable<RawFixedBuffer<8>>);
+static_assert(!aglio::detail::sized_once<std::vector<std::byte>>);
+
+/// Packing into a fixed buffer (serialized into one window) gives the bytes packing into a
+/// std::vector (grown per field) gives - behind bytes already in the buffer too.
+template<typename Type,
+         typename Packager,
+         typename Fixed>
+void testFixed() {
+    Type const t_in = Types::createDefault<Type>();
+
+    std::vector<std::byte> want{};
+    REQUIRE(Packager::pack(want, t_in));
+
+    Fixed fixed{};
+    REQUIRE(Packager::pack(fixed, t_in));
+    CHECK(std::ranges::equal(fixed, want));
+
+    Fixed behind{};
+    behind.used = 3;
+    behind[0]   = std::byte{0xA1};
+    behind[2]   = std::byte{0xC3};
+    REQUIRE(Packager::pack(behind, t_in));
+    REQUIRE(behind.size() == 3 + want.size());
+    CHECK(behind[0] == std::byte{0xA1});
+    CHECK(behind[2] == std::byte{0xC3});
+    CHECK(std::ranges::equal(behind.bytes().subspan(3), want));
+
+    Type                   t_out{};
+    std::vector<std::byte> packed(fixed.bytes().begin(), fixed.bytes().end());
+    auto                   result = Packager::unpack(packed, t_out);
+    REQUIRE(result.has_value());
+    CHECK(t_in == t_out);
+}
+
 struct PacketHeader {
     std::uint32_t id{};
     std::uint8_t  typeId{};
@@ -90,6 +206,212 @@ TEMPLATE_LIST_TEST_CASE("Packager",
     using Config = std::tuple_element_t<1, TestType>;
 
     Test::packager::test<Type, aglio::Packager<Config>>();
+}
+
+TEMPLATE_LIST_TEST_CASE("Packager into a fixed-capacity buffer",
+                        "[cartesian][fixed]",
+                        Test::packager::TestCases) {
+    using Type   = std::tuple_element_t<0, TestType>;
+    using Config = std::tuple_element_t<1, TestType>;
+
+    Test::packager::testFixed<Type, aglio::Packager<Config>, Test::packager::FixedBuffer<8192>>();
+    Test::packager::
+      testFixed<Type, aglio::Packager<Config>, Test::packager::RawFixedBuffer<8192>>();
+}
+
+namespace Test::packager {
+using SmallFixedBuffers = std::tuple<FixedBuffer<12>, RawFixedBuffer<12>>;
+}
+
+TEMPLATE_LIST_TEST_CASE("A pack that fails leaves the buffer as it was",
+                        "[packager][fixed]",
+                        Test::packager::SmallFixedBuffers) {
+    using Packager = aglio::Packager<Test::packager::Configs::Full>;
+    std::vector<std::uint32_t> const value{1, 2, 3, 4, 5, 6, 7, 8};
+
+    // No room for the body, and none for the header either.
+    for(std::size_t const prefix : std::array{std::size_t{2}, std::size_t{11}}) {
+        TestType buffer{};
+        buffer.used = prefix;
+        buffer[0]   = std::byte{0xA1};
+        CHECK(!Packager::pack(buffer, value));
+        CHECK(buffer.size() == prefix);
+        CHECK(buffer[0] == std::byte{0xA1});
+    }
+
+    std::vector<std::byte> grown{std::byte{0xA1}, std::byte{0xB2}};
+    // Fails on MaxSize, after the header went in.
+    CHECK(!aglio::Packager<Test::packager::Configs::SmallMax>::pack(grown, std::uint64_t{1}));
+    CHECK(std::ranges::equal(grown, std::array{std::byte{0xA1}, std::byte{0xB2}}));
+}
+
+TEST_CASE("Packager into a fixed buffer that has no begin()",
+          "[packager][fixed]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Minimal>;
+    std::vector<std::uint32_t> const value{1, 2, 3};
+
+    std::vector<std::byte> want{};
+    REQUIRE(Packager::pack(want, value));
+
+    Test::packager::BareFixedBuffer<64> bare{};
+    REQUIRE(Packager::pack(bare, value));
+    REQUIRE(bare.size() == want.size());
+    CHECK(std::ranges::equal(std::span{bare.storage}.first(bare.size()), want));
+}
+
+namespace Test::packager {
+struct WithEmptyArray {
+    std::uint16_t      before{};
+    std::array<int, 0> nothing{};
+    std::uint16_t      after{};
+    bool               operator==(WithEmptyArray const&) const = default;
+};
+}   // namespace Test::packager
+
+TEST_CASE("A zero-length array field takes no bytes beyond its size, in either kind of buffer",
+          "[serializer][fixed]") {
+    using Serializer = aglio::detail::Serializer<std::uint16_t>;
+    Test::packager::WithEmptyArray const value{.before = 0x1122, .nothing = {}, .after = 0x3344};
+
+    std::vector<std::byte> want{};
+    REQUIRE(Serializer::serialize(want, value));
+    CHECK(want.size() == 2 + 2 + 2);
+
+    Test::packager::FixedBuffer<16> fixed{};
+    REQUIRE(Serializer::serialize(fixed, value));
+    CHECK(std::ranges::equal(fixed, want));
+
+    Test::packager::WithEmptyArray out{};
+    auto const                     ec = Serializer::deserialize(want, out);
+    CHECK(!ec);
+    CHECK(out == value);
+}
+
+namespace Test::packager {
+struct Short {
+    std::uint8_t value{};
+};
+
+struct HoldsShort {
+    std::uint16_t before{};
+    Short         wrong{};
+};
+
+struct Plain {
+    std::uint8_t                 a{};
+    std::uint32_t                b{};
+    std::array<std::uint16_t, 3> c{};
+    bool                         d{};
+    bool                         operator==(Plain const&) const = default;
+};
+}   // namespace Test::packager
+
+// Writes one byte and claims to take two.
+template<typename Size_t>
+struct aglio::serializer<Test::packager::Short, Size_t> {
+    static bool serialize(Test::packager::Short const& v,
+                          auto&                        buffer) {
+        return aglio::serializer<std::uint8_t, Size_t>::serialize(v.value, buffer);
+    }
+
+    static bool deserialize(Test::packager::Short& v,
+                            auto&                  buffer) {
+        return aglio::serializer<std::uint8_t, Size_t>::deserialize(v.value, buffer);
+    }
+};
+
+template<typename Size_t>
+struct aglio::serialized_size<Test::packager::Short, Size_t>
+  : std::integral_constant<std::size_t, 2> {};
+
+TEST_CASE("A value of fixed serialized size takes one claim of the buffer",
+          "[serializer][fixed]") {
+    using Serializer = aglio::detail::Serializer<std::uint16_t>;
+    using Test::packager::Plain;
+    constexpr std::size_t Size = aglio::serialized_size_v<Plain, std::uint16_t>;
+    REQUIRE(Size == 1 + 4 + (2 + 3 * 2) + 1);
+
+    Plain const value{
+      .a = 0x11,
+      .b = 0x22334455,
+      .c = {1, 2, 3},
+      .d = true
+    };
+
+    std::vector<std::byte> want{};
+    REQUIRE(Serializer::serialize(want, value));
+    REQUIRE(want.size() == Size);
+    CHECK(want[0] == std::byte{0x11});
+    CHECK(want[1] == std::byte{0x55});
+    CHECK(want[4] == std::byte{0x22});
+
+    // One byte short, exactly enough, and with room to spare.
+    Test::packager::RawFixedBuffer<1 + Size - 1> small{};
+    small.used = 1;
+    CHECK(!Serializer::serialize(small, value));
+    CHECK(small.size() == 1);
+
+    Test::packager::FixedBuffer<1 + Size> exact{};
+    exact.used = 1;
+    exact[0]   = std::byte{0xEE};
+    REQUIRE(Serializer::serialize(exact, value));
+    CHECK(exact[0] == std::byte{0xEE});
+    CHECK(std::ranges::equal(exact.bytes().subspan(1), want));
+
+    Plain out{};
+    auto  ec = Serializer::deserialize(want, out);
+    CHECK(!ec);
+    CHECK(ec.location == Size);
+    CHECK(out == value);
+
+    // Fewer bytes than the value takes: refused as a whole.
+    auto cut = std::span{want}.first(Size - 1);
+    CHECK(Serializer::deserialize(cut, out));
+}
+
+TEST_CASE("A serialized_size that is not what the serializer writes fails instead of leaving a gap",
+          "[serializer][fixed]") {
+    using Serializer = aglio::detail::Serializer<std::uint16_t>;
+    static_assert(aglio::serialized_size_v<Test::packager::HoldsShort, std::uint16_t> == 4);
+    Test::packager::HoldsShort const value{.before = 7, .wrong = {.value = 9}};
+
+    std::vector<std::byte> grown{};
+    CHECK(!Serializer::serialize(grown, value));
+
+    Test::packager::FixedBuffer<16> fixed{};
+    CHECK(!Serializer::serialize(fixed, value));
+    CHECK(fixed.size() == 0);
+
+    std::array<std::byte, 4> const bytes{};
+    Test::packager::HoldsShort     out{};
+    auto                           in = std::span{bytes};
+    CHECK(Serializer::deserialize(in, out));
+}
+
+TEST_CASE("Serializer into a fixed buffer too small for the value fails and writes nothing",
+          "[serializer][fixed]") {
+    using Serializer = aglio::detail::Serializer<std::uint16_t>;
+    std::vector<std::uint32_t> const value{1, 2, 3, 4, 5, 6, 7, 8};
+
+    Test::packager::FixedBuffer<64> roomy{};
+    roomy.resize(2);
+    REQUIRE(Serializer::serialize(roomy, value));
+    std::vector<std::byte> want{};
+    REQUIRE(Serializer::serialize(want, value));
+    CHECK(roomy.size() == 2 + want.size());
+    CHECK(std::ranges::equal(roomy.bytes().subspan(2), want));
+
+    Test::packager::FixedBuffer<16> small{};
+    small.resize(2);
+    CHECK(!Serializer::serialize(small, value));
+    CHECK(small.size() == 2);
+
+    // Exactly full still fits.
+    Test::packager::FixedBuffer<2 + 2 + 8 * 4> exact{};
+    exact.resize(2);
+    REQUIRE(want.size() == 2 + 8 * 4);
+    CHECK(Serializer::serialize(exact, value));
+    CHECK(exact.size() == exact.capacity());
 }
 
 TEST_CASE("Serializer rejects range that exceeds fixed-capacity container max_size",

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "inline.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstring>
@@ -19,6 +21,46 @@ public:
     constexpr std::size_t size() const { return position_; }
 
     constexpr std::byte const* data() const { return buffer_.data(); }
+
+    /// A fixed-size field copies with a constant length. Only into a buffer that does not grow;
+    /// the others take the insert below.
+    template<std::size_t N>
+        requires(N != std::dynamic_extent)
+    AGLIO_INLINE constexpr bool insert(std::span<std::byte const,
+                                                 N> data) {
+        if constexpr(N == 0) {
+            return true;
+        } else if constexpr(!requires { buffer_.resize(1); }) {
+            if(N > static_cast<std::size_t>(buffer_.size()) - position_) { return false; }
+            detail::copy_fixed<N>(
+              std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)),
+              data.data());
+            position_ += N;
+            return true;
+        } else {
+            return insert(std::span<std::byte const>{data});
+        }
+    }
+
+    /// The next n bytes (n > 0) for the caller to write, or nullptr when there is no room.
+    AGLIO_INLINE constexpr std::byte* claim(std::size_t n) {
+        auto const available = static_cast<std::size_t>(buffer_.size()) - position_;
+        if(n > available) {
+            if constexpr(requires { buffer_.resize(1); }) {
+                auto const newSize = static_cast<std::size_t>(buffer_.size()) + (n - available);
+                if constexpr(requires { buffer_.max_size(); }) {
+                    if(newSize > static_cast<std::size_t>(buffer_.max_size())) { return nullptr; }
+                }
+                buffer_.resize(static_cast<decltype(buffer_.size())>(newSize));
+            } else {
+                return nullptr;
+            }
+        }
+        void* const at
+          = std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_));
+        position_ += n;
+        return static_cast<std::byte*>(at);
+    }
 
     constexpr bool insert(std::span<std::byte const> data) {
         if(data.size_bytes() == 0) { return true; }
@@ -72,6 +114,32 @@ public:
         return std::as_bytes(std::span{
           std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)),
           available()});
+    }
+
+    /// The next n bytes (n > 0) for the caller to read, or nullptr when there are fewer.
+    AGLIO_INLINE constexpr std::byte const* claim(std::size_t n) {
+        if(n > available()) { return nullptr; }
+        void const* const at
+          = std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_));
+        position_ += n;
+        return static_cast<std::byte const*>(at);
+    }
+
+    /// The counterpart of the serialization view's fixed-size insert.
+    template<std::size_t N>
+        requires(N != std::dynamic_extent)
+    AGLIO_INLINE constexpr bool extract(std::span<std::byte,
+                                                  N> data) {
+        if constexpr(N == 0) {
+            return true;
+        } else {
+            if(N > available()) { return false; }
+            detail::copy_fixed<N>(
+              data.data(),
+              std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)));
+            position_ += N;
+            return true;
+        }
     }
 
     constexpr bool extract(std::span<std::byte> data) {

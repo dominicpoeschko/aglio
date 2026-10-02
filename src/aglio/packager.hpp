@@ -3,12 +3,14 @@
 #include "serialization_buffers.hpp"
 #include "serializer.hpp"
 
+#include <concepts>
 #include <cstddef>
 #include <expected>
 #include <functional>
 #include <optional>
 #include <ranges>
 #include <span>
+#include <type_traits>
 
 namespace aglio {
 
@@ -29,6 +31,56 @@ namespace detail {
     template<typename T>
     constexpr bool is_trivial_v
       = std::is_trivially_default_constructible_v<T> && std::is_trivially_copyable_v<T>;
+
+    /// A buffer whose max_size() equals its capacity, known at compile time (a static vector or
+    /// an adapter around one). A std::vector never qualifies.
+    template<typename B>
+    constexpr bool fixed_capacity_v = [] {
+        using U = std::remove_cvref_t<B>;
+        if constexpr(requires { U::FixedCapacity; }) {
+            return bool{U::FixedCapacity};
+        } else if constexpr(requires {
+                                typename std::bool_constant<(U::max_size() == U::capacity())>;
+                            })
+        {
+            return U::max_size() == U::capacity();
+        } else {
+            return false;
+        }
+    }();
+
+    /// A buffer the serializer writes as one window from data(), setting its size afterwards.
+    template<typename B>
+    concept sized_once = fixed_capacity_v<B> && requires(B& b) {
+        { b.data() } -> std::convertible_to<std::byte*>;
+        { b.size() } -> std::convertible_to<std::size_t>;
+        b.resize(std::size_t{});
+        b.max_size();
+    };
+
+    /// The free room of a fixed-capacity buffer.
+    struct Window {
+        std::byte*  first;
+        std::size_t count;
+
+        constexpr std::byte* data() const noexcept { return first; }
+
+        constexpr std::size_t size() const noexcept { return count; }
+    };
+
+    /// resize_and_overwrite op that keeps every byte.
+    struct keep_all {
+        constexpr std::size_t operator()(auto*,
+                                         std::size_t n) const noexcept {
+            return n;
+        }
+    };
+
+    /// A fixed-capacity buffer with std::string's resize_and_overwrite(n, op), so growing it
+    /// fills nothing. Without it the buffer is resized to max_size() and trimmed after.
+    template<typename B>
+    concept overwritable = fixed_capacity_v<B>
+                        && requires(B& b) { b.resize_and_overwrite(std::size_t{}, keep_all{}); };
 
     template<typename Serializer, typename Config_>
     struct Packager {
@@ -151,6 +203,8 @@ namespace detail {
             bool              finalized{false};
 
         public:
+            static constexpr bool FixedCapacity = fixed_capacity_v<Buffer>;
+
             explicit BufferAdapter(Buffer& buffer_)
               : buffer{buffer_}
               , startSize{buffer.size()} {}
@@ -165,6 +219,27 @@ namespace detail {
             std::size_t finalized_size() const { return finalizedSize - startSize; }
 
             void resize(std::size_t newSize) { buffer.resize(newSize + startSize); }
+
+            template<typename Op>
+                requires overwritable<Buffer>
+            void resize_and_overwrite(std::size_t newSize,
+                                      Op&&        op) {
+                buffer.resize_and_overwrite(newSize + startSize, [&](auto* first, std::size_t n) {
+                    return op(std::next(first,
+                                        static_cast<std::make_signed_t<std::size_t>>(startSize)),
+                              n - startSize)
+                         + startSize;
+                });
+            }
+
+            /// Grows for bytes the caller will overwrite; unfilled where the buffer allows.
+            void resize_for_overwrite(std::size_t newSize) {
+                if constexpr(overwritable<Buffer>) {
+                    resize_and_overwrite(newSize, keep_all{});
+                } else {
+                    resize(newSize);
+                }
+            }
 
             std::size_t max_size() const {
                 if constexpr(requires { buffer.max_size(); }) {
@@ -232,14 +307,26 @@ namespace detail {
             return aglio::serializer<T, Size_t>::deserialize(v, debuf);
         }
 
+        /// A failed pack leaves the buffer unchanged.
         template<typename T,
                  typename Buffer>
         static constexpr bool packImpl(Buffer&             buffer,
                                        T const&            v,
                                        HeaderData_t const& info) {
+            auto const startSize = buffer.size();
+            if(packInto(buffer, v, info)) { return true; }
+            buffer.resize(startSize);
+            return false;
+        }
+
+        template<typename T,
+                 typename Buffer>
+        static constexpr bool packInto(Buffer&             buffer,
+                                       T const&            v,
+                                       HeaderData_t const& info) {
             BufferAdapter<Buffer> headerBuffer{buffer};
             if(headerBuffer.max_size() < HeaderSize) { return false; }
-            headerBuffer.resize(HeaderSize);
+            headerBuffer.resize_for_overwrite(HeaderSize);
 
             BufferAdapter<decltype(headerBuffer)> bodyBuffer{headerBuffer};
             if(!Serializer::serialize(bodyBuffer, v)) { return false; }
@@ -251,7 +338,7 @@ namespace detail {
                   std::span(std::ranges::subrange(bodyBuffer.begin(), bodyBuffer.end()))));
 
                 if(crcBuffer.max_size() < CrcSize) { return false; }
-                crcBuffer.resize(CrcSize);
+                crcBuffer.resize_for_overwrite(CrcSize);
                 if(!header_write<Crc_t, CrcSize>(crcBuffer.as_span(), bodyCrc)) { return false; }
                 crcBuffer.finalize();
             }
@@ -260,12 +347,11 @@ namespace detail {
               = static_cast<Config::Size_t>(bodyBuffer.finalized_size() + CrcSize);
 
             if constexpr(Config::UsePackageStart) {
-                std::memcpy(headerBuffer.data(), std::addressof(PackageStart), PackageStartSize);
+                copy_fixed<PackageStartSize>(headerBuffer.data(), std::addressof(PackageStart));
             }
 
-            std::memcpy(std::next(headerBuffer.data(), PackageStartSize),
-                        std::addressof(bodySize),
-                        PackageSizeSize);
+            copy_fixed<PackageSizeSize>(std::next(headerBuffer.data(), PackageStartSize),
+                                        std::addressof(bodySize));
 
             if constexpr(Config::UseCrc && !Config::UseHeaderCrc) {
                 BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
@@ -273,7 +359,7 @@ namespace detail {
                   std::span(std::ranges::subrange(headerBuffer.begin(), bodyBuffer.end()))));
 
                 if(crcBuffer.max_size() < CrcSize) { return false; }
-                crcBuffer.resize(CrcSize);
+                crcBuffer.resize_for_overwrite(CrcSize);
                 if(!header_write<Crc_t, CrcSize>(crcBuffer.as_span(), bodyCrc)) { return false; }
                 crcBuffer.finalize();
             }
@@ -335,7 +421,7 @@ namespace detail {
                 if constexpr(Config::UsePackageStart) {
                     PackageStart_t read_packageStart{};
 
-                    std::memcpy(std::addressof(read_packageStart), span.data(), PackageStartSize);
+                    copy_fixed<PackageStartSize>(std::addressof(read_packageStart), span.data());
 
                     if(read_packageStart != PackageStart) {
                         skip();
@@ -378,9 +464,8 @@ namespace detail {
                 }
 
                 Size_t read_bodySize{};
-                std::memcpy(std::addressof(read_bodySize),
-                            std::next(span.data(), PackageStartSize),
-                            PackageSizeSize);
+                copy_fixed<PackageSizeSize>(std::addressof(read_bodySize),
+                                            std::next(span.data(), PackageStartSize));
 
                 if(read_bodySize > MaxSize || read_bodySize < CrcSize) {
                     skip();
@@ -549,9 +634,32 @@ namespace detail {
                  typename Buffer>
         static bool serialize(Buffer&  buffer,
                               T const& v) {
-            aglio::DynamicSerializationView sebuff{buffer};
-
-            return aglio::Serializer<Size_t>::serialize(sebuff, v);
+            // A fixed-capacity buffer is written as one window over its free room and resized
+            // once, instead of growing per field. On failure its size is restored.
+            if constexpr(sized_once<Buffer>) {
+                auto const start = static_cast<std::size_t>(buffer.size());
+                auto const room  = static_cast<std::size_t>(buffer.max_size());
+                if(room < start) { return false; }
+                bool       ok{};
+                auto const write = [&](std::byte* first, std::size_t) {
+                    Window const window{
+                      std::next(first, static_cast<std::make_signed_t<std::size_t>>(start)),
+                      room - start};
+                    aglio::DynamicSerializationView sebuff{window};
+                    ok = aglio::Serializer<Size_t>::serialize(sebuff, v);
+                    return start + (ok ? sebuff.size() : std::size_t{});
+                };
+                if constexpr(overwritable<Buffer>) {
+                    buffer.resize_and_overwrite(room, write);
+                } else {
+                    buffer.resize(room);
+                    buffer.resize(write(buffer.data(), room));
+                }
+                return ok;
+            } else {
+                aglio::DynamicSerializationView sebuff{buffer};
+                return aglio::Serializer<Size_t>::serialize(sebuff, v);
+            }
         }
 
         struct parse_error final {
