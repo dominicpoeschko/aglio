@@ -1,4 +1,5 @@
 #pragma once
+#include "inline.hpp"
 #include "type_descriptor.hpp"
 
 #include <iostream>
@@ -29,50 +30,50 @@ using enchantum::iostream_operators::operator<<;
 template<typename Stream,
          typename T1,
          typename T2>
-Stream& operator<<(Stream&              os,
+Stream& operator<<(Stream& os           AGLIO_LIFETIMEBOUND,
                    std::pair<T1,
                              T2> const& p);
 
 template<typename Stream,
          typename... Ts>
-Stream& operator<<(Stream&                  os,
+Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
                    std::tuple<Ts...> const& t);
 
 template<typename Stream,
          typename T>
-Stream& operator<<(Stream&                 os,
+Stream& operator<<(Stream& os              AGLIO_LIFETIMEBOUND,
                    std::optional<T> const& opt);
 
 template<typename Stream,
          typename T,
          typename E>
-Stream& operator<<(Stream&                 os,
+Stream& operator<<(Stream& os              AGLIO_LIFETIMEBOUND,
                    std::expected<T,
                                  E> const& v);
 
 template<typename Stream,
          typename... Ts>
-Stream& operator<<(Stream&                    os,
+Stream& operator<<(Stream& os                 AGLIO_LIFETIMEBOUND,
                    std::variant<Ts...> const& v);
 
 template<typename Stream,
          typename T,
          typename... Args>
-Stream& operator<<(Stream&                     os,
+Stream& operator<<(Stream& os                  AGLIO_LIFETIMEBOUND,
                    std::vector<T,
                                Args...> const& v);
 
 template<typename Stream,
          typename T,
          std::size_t N>
-Stream& operator<<(Stream&              os,
+Stream& operator<<(Stream& os           AGLIO_LIFETIMEBOUND,
                    std::array<T,
                               N> const& a);
 
 template<typename Stream,
          typename T,
          typename... Args>
-Stream& operator<<(Stream&                  os,
+Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
                    std::set<T,
                             Args...> const& s);
 
@@ -80,7 +81,7 @@ template<typename Stream,
          typename K,
          typename V,
          typename... Args>
-Stream& operator<<(Stream&                  os,
+Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
                    std::map<K,
                             V,
                             Args...> const& m);
@@ -107,8 +108,8 @@ void print_members(Stream&  os,
 
 template<typename Stream,
          aglio::Described T>
-Stream& operator<<(Stream&  os,
-                   T const& v) {
+Stream& operator<<(Stream& os AGLIO_LIFETIMEBOUND,
+                   T const&   v) {
     os << '{';
     aglio::detail::print_members(os, v, std::make_index_sequence<glz::reflect<T>::size>{});
     os << '}';
@@ -181,8 +182,8 @@ concept StringLike = IsStdString<T> || IsStdStringView<T> || IsCharPtr<T>;
 
 template<typename Stream,
          typename T>
-Stream& print_value(Stream&  os,
-                    T const& value) {
+Stream& print_value(Stream& os AGLIO_LIFETIMEBOUND,
+                    T const&   value) {
     if constexpr(StringLike<T>) {
         os << "\"";
         os << value;
@@ -199,7 +200,7 @@ namespace aglio::ostream::detail {
 template<typename Stream,
          typename Tuple,
          std::size_t... Is>
-Stream& print_tuple(Stream&      os,
+Stream& print_tuple(Stream& os   AGLIO_LIFETIMEBOUND,
                     Tuple const& t,
                     std::index_sequence<Is...>) {
     os << '(';
@@ -217,7 +218,7 @@ Stream& print_tuple(Stream&      os,
 // Helper for range-based containers
 template<typename Stream,
          typename Range>
-Stream& print_range(Stream&      os,
+Stream& print_range(Stream& os   AGLIO_LIFETIMEBOUND,
                     Range const& r) {
     os << '[';
     bool first = true;
@@ -238,7 +239,7 @@ Stream& print_range(Stream&      os,
 template<typename Stream,
          typename T1,
          typename T2>
-Stream& operator<<(Stream&              os,
+Stream& operator<<(Stream& os           AGLIO_LIFETIMEBOUND,
                    std::pair<T1,
                              T2> const& p) {
     aglio::ostream::detail::print_tuple(os, p, std::make_index_sequence<2>{});
@@ -248,7 +249,7 @@ Stream& operator<<(Stream&              os,
 // std::tuple
 template<typename Stream,
          typename... Ts>
-Stream& operator<<(Stream&                  os,
+Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
                    std::tuple<Ts...> const& t) {
     aglio::ostream::detail::print_tuple(os, t, std::make_index_sequence<sizeof...(Ts)>{});
     return os;
@@ -257,7 +258,7 @@ Stream& operator<<(Stream&                  os,
 // std::optional
 template<typename Stream,
          typename T>
-Stream& operator<<(Stream&                 os,
+Stream& operator<<(Stream& os              AGLIO_LIFETIMEBOUND,
                    std::optional<T> const& opt) {
     if(opt.has_value()) {
         os << "optional(";
@@ -273,7 +274,7 @@ Stream& operator<<(Stream&                 os,
 template<typename Stream,
          typename T,
          typename E>
-Stream& operator<<(Stream&                 os,
+Stream& operator<<(Stream& os              AGLIO_LIFETIMEBOUND,
                    std::expected<T,
                                  E> const& v) {
     if(v.has_value()) {
@@ -291,7 +292,7 @@ Stream& operator<<(Stream&                 os,
 // std::variant
 template<typename Stream,
          typename... Ts>
-Stream& operator<<(Stream&                    os,
+Stream& operator<<(Stream& os                 AGLIO_LIFETIMEBOUND,
                    std::variant<Ts...> const& v) {
     os << "variant(";
     std::visit([&](auto const& value) { aglio::ostream::detail::print_value(os, value); }, v);
@@ -303,7 +304,7 @@ Stream& operator<<(Stream&                    os,
 template<typename Stream,
          typename T,
          typename... Args>
-Stream& operator<<(Stream&                     os,
+Stream& operator<<(Stream& os                  AGLIO_LIFETIMEBOUND,
                    std::vector<T,
                                Args...> const& v) {
     aglio::ostream::detail::print_range(os, v);
@@ -314,7 +315,7 @@ Stream& operator<<(Stream&                     os,
 template<typename Stream,
          typename T,
          std::size_t N>
-Stream& operator<<(Stream&              os,
+Stream& operator<<(Stream& os           AGLIO_LIFETIMEBOUND,
                    std::array<T,
                               N> const& a) {
     aglio::ostream::detail::print_range(os, a);
@@ -325,7 +326,7 @@ Stream& operator<<(Stream&              os,
 template<typename Stream,
          typename T,
          typename... Args>
-Stream& operator<<(Stream&                  os,
+Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
                    std::set<T,
                             Args...> const& s) {
     os << '{';
@@ -344,7 +345,7 @@ template<typename Stream,
          typename K,
          typename V,
          typename... Args>
-Stream& operator<<(Stream&                  os,
+Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
                    std::map<K,
                             V,
                             Args...> const& m) {

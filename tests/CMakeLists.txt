@@ -52,11 +52,15 @@ target_compile_options(test_aglio PRIVATE ${aglio_sanitizer_ignorelist})
 set(USE_STD c++23)
 
 # INTERFACE libraries are skipped: they compile nothing, and the helpers set non-INTERFACE properties, which is an error
-# on those targets.
+# on those targets. SYSTEM for all of them: their headers are not warning-clean under -Weverything and not ours to fix
+# (an imported target is SYSTEM already).
 foreach(dep_target fmt Catch2 Catch2WithMain)
     if(TARGET ${dep_target})
         get_target_property(_imported ${dep_target} IMPORTED)
         get_target_property(_type ${dep_target} TYPE)
+        if(NOT _imported)
+            set_target_properties(${dep_target} PROPERTIES SYSTEM TRUE)
+        endif()
         if(NOT _imported AND NOT _type STREQUAL "INTERFACE_LIBRARY")
             target_add_stdlib_flags(${dep_target})
             target_add_stdlib_debug_flags(${dep_target})

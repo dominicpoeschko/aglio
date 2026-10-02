@@ -16,7 +16,8 @@ private:
     std::size_t position_{};
 
 public:
-    constexpr explicit DynamicSerializationView(Buffer& buffer) : buffer_{buffer} {}
+    constexpr explicit DynamicSerializationView(Buffer& buffer AGLIO_LIFETIMEBOUND)
+      : buffer_{buffer} {}
 
     constexpr std::size_t size() const { return position_; }
 
@@ -96,7 +97,8 @@ private:
     std::size_t position_{};
 
 public:
-    constexpr explicit DynamicDeserializationView(Buffer& buffer) : buffer_{buffer} {}
+    constexpr explicit DynamicDeserializationView(Buffer& buffer AGLIO_LIFETIMEBOUND)
+      : buffer_{buffer} {}
 
     constexpr std::size_t size() const { return buffer_.size(); }
 
@@ -163,7 +165,8 @@ private:
     Stream& stream_;
 
 public:
-    constexpr explicit StreamSerializationView(Stream& stream) : stream_{stream} {}
+    constexpr explicit StreamSerializationView(Stream& stream AGLIO_LIFETIMEBOUND)
+      : stream_{stream} {}
 
     constexpr bool insert(std::span<std::byte const> data) {
         if(data.size_bytes() == 0) { return true; }
@@ -182,7 +185,8 @@ private:
     Stream& stream_;
 
 public:
-    constexpr explicit StreamDeserializationView(Stream& stream) : stream_{stream} {}
+    constexpr explicit StreamDeserializationView(Stream& stream AGLIO_LIFETIMEBOUND)
+      : stream_{stream} {}
 
     constexpr std::size_t size() const { return std::numeric_limits<std::size_t>::max(); }
 

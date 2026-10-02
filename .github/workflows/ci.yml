@@ -33,7 +33,7 @@ jobs:
 
             - name: Configure CMake
               run: >
-                cmake -S tests -B build
+                cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON
                 ${{ matrix.compiler.sanitizer && format('-DUSE_SANITIZER={0}', matrix.compiler.sanitizer) || '' }}
                 ${{ matrix.compiler.stdlib && format('-DUSE_STD_LIB={0}', matrix.compiler.stdlib) || '' }}
                 ${{ matrix.compiler.stdlib_debug && '-DUSE_STDLIB_DEBUG=true' || '' }}
@@ -63,7 +63,7 @@ jobs:
                 pacman -S --noconfirm git cmake base-devel clang
 
             - name: Configure CMake
-              run: cmake -S tests -B build
+              run: cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON
               env:
                 CC: clang
                 CXX: clang++
@@ -108,7 +108,7 @@ jobs:
                 pacman -S --noconfirm git cmake base-devel clang
 
             - name: Configure CMake
-              run: cmake -S tests/remote_fmt -B build-remote-fmt
+              run: cmake -S tests/remote_fmt -B build-remote-fmt -DUSE_WARNINGS_AS_ERRORS=ON
               env:
                 CC: clang
                 CXX: clang++

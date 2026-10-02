@@ -72,7 +72,7 @@ struct FixedBuffer {
 
     std::span<std::byte const> bytes() const { return std::span{storage}.first(used); }
 
-    std::byte* data() { return storage.data(); }
+    std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
     std::byte const* data() const { return storage.data(); }
 
@@ -84,7 +84,7 @@ struct FixedBuffer {
 
     auto end() const { return bytes().end(); }
 
-    std::byte& operator[](std::size_t i) { return storage[i]; }
+    std::byte& operator[](std::size_t i) AGLIO_LIFETIMEBOUND { return storage[i]; }
 };
 
 /// The same with std::string's resize_and_overwrite. Growing it by resize() is an error.
@@ -122,7 +122,7 @@ struct BareFixedBuffer {
         used = n;
     }
 
-    std::byte* data() { return storage.data(); }
+    std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 };
 
 static_assert(aglio::detail::fixed_capacity_v<FixedBuffer<8>>);
@@ -632,7 +632,7 @@ TEST_CASE("pack fails gracefully when output buffer max_size is exceeded",
         std::array<std::byte, 8> storage{};
         std::size_t              sz{0};
 
-        std::byte* data() { return storage.data(); }
+        std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
         std::size_t size() const { return sz; }
 

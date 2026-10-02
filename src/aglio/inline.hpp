@@ -10,6 +10,17 @@
     #define AGLIO_INLINE inline
 #endif
 
+// Tells clang that a returned reference or a constructed object refers to this argument, so its lifetime analysis can
+// see a dangling use. Nothing on other compilers.
+#if defined(__has_cpp_attribute)
+    #if __has_cpp_attribute(clang::lifetimebound)
+        #define AGLIO_LIFETIMEBOUND [[clang::lifetimebound]]
+    #endif
+#endif
+#ifndef AGLIO_LIFETIMEBOUND
+    #define AGLIO_LIFETIMEBOUND
+#endif
+
 namespace aglio { namespace detail {
 
     /// Copies N bytes as loads and stores. The builtin on purpose: with -ffreestanding,

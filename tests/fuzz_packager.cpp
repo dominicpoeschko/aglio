@@ -25,13 +25,13 @@ struct BoundedBuffer {
     std::size_t                     limit{};
     std::size_t                     sz{};
 
-    std::byte* data() { return storage.data(); }
+    std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
     std::size_t size() const { return sz; }
 
     std::size_t max_size() const { return limit; }
 
-    auto begin() { return storage.begin(); }
+    auto begin() AGLIO_LIFETIMEBOUND { return storage.begin(); }
 
     void resize(std::size_t n) { sz = n; }
 };
@@ -48,13 +48,13 @@ struct FixedBuffer {
 
     std::size_t size() const { return sz; }
 
-    std::byte* data() { return storage.data(); }
+    std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
     auto begin() { return std::span{storage}.first(sz).begin(); }
 
     auto end() { return std::span{storage}.first(sz).end(); }
 
-    std::byte& operator[](std::size_t i) { return storage[i]; }
+    std::byte& operator[](std::size_t i) AGLIO_LIFETIMEBOUND { return storage[i]; }
 
     void resize(std::size_t n) {
         if(n > N) { std::abort(); }

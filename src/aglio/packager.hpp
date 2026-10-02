@@ -205,7 +205,7 @@ namespace detail {
         public:
             static constexpr bool FixedCapacity = fixed_capacity_v<Buffer>;
 
-            explicit BufferAdapter(Buffer& buffer_)
+            explicit BufferAdapter(Buffer& buffer_ AGLIO_LIFETIMEBOUND)
               : buffer{buffer_}
               , startSize{buffer.size()} {}
 

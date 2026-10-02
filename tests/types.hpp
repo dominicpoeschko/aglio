@@ -1,5 +1,6 @@
 #pragma once
 
+#include <aglio/inline.hpp>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -211,9 +212,9 @@ struct ContiguousSet {
     std::array<T, Cap> data_{};
     std::size_t        size_{0};
 
-    iterator begin() noexcept { return data_.begin(); }
+    iterator begin() noexcept AGLIO_LIFETIMEBOUND { return data_.begin(); }
 
-    const_iterator begin() const noexcept { return data_.begin(); }
+    const_iterator begin() const noexcept AGLIO_LIFETIMEBOUND { return data_.begin(); }
 
     iterator end() noexcept { return std::next(data_.begin(), static_cast<std::ptrdiff_t>(size_)); }
 
