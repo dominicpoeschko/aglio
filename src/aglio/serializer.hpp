@@ -334,6 +334,24 @@ struct serializer<std::expected<T, E>, Size_t> {
 
 template<typename... Ts, typename Size_t>
 struct serializer<std::variant<Ts...>, Size_t> {
+    // One alternative's (de)serialization, out of line and per alternative *type*: inlined
+    // into the variant's dispatch, every alternative carried a copy of its type's code, and
+    // alternatives of the same type (many commands share a request or a response type) carried
+    // the same code again and again. The dispatch stays a switch on the index.
+    template<typename T,
+             typename Buffer>
+    [[gnu::noinline]] static constexpr bool serializeAlternative(T const& alt,
+                                                                 Buffer&  buffer) {
+        return serializer<T, Size_t>::serialize(alt, buffer);
+    }
+
+    template<typename T,
+             typename Buffer>
+    [[gnu::noinline]] static constexpr bool deserializeAlternative(T&      alt,
+                                                                   Buffer& buffer) {
+        return serializer<T, Size_t>::deserialize(alt, buffer);
+    }
+
     template<typename Buffer>
     AGLIO_INLINE static constexpr bool serialize(std::variant<Ts...> const& v,
                                                  Buffer&                    buffer) {
@@ -343,11 +361,7 @@ struct serializer<std::variant<Ts...>, Size_t> {
         static_assert(std::numeric_limits<Index_t>::max() >= N, "variant too big");
         Index_t const index = static_cast<Index_t>(v.index());
         if(!serializer<Index_t, Size_t>::serialize(index, buffer)) { return false; }
-        return std::visit(
-          [&](auto const& vv) {
-              return serializer<std::remove_cvref_t<decltype(vv)>, Size_t>::serialize(vv, buffer);
-          },
-          v);
+        return std::visit([&](auto const& vv) { return serializeAlternative(vv, buffer); }, v);
     }
 
     template<typename Buffer>
@@ -365,9 +379,9 @@ struct serializer<std::variant<Ts...>, Size_t> {
         auto action = [&](auto i) {
             static constexpr std::size_t I = decltype(i)::value;
             if(I == index) {
-                v.template emplace<I>();
-                return serializer<std::variant_alternative_t<I, std::variant<Ts...>>,
-                                  Size_t>::deserialize(std::get<I>(v), buffer);
+                // emplace() returns the alternative: no checked std::get<I> after it.
+                auto& alt = v.template emplace<I>();
+                return deserializeAlternative(alt, buffer);
             }
             return N > I;
         };
