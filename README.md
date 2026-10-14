@@ -164,8 +164,10 @@ cmake -S tests -B build && cmake --build build && cd build && ctest --output-on-
 
 `Packager::unpack` and `Packager::validate` consume untrusted bytes, so they are also fuzzed
 with libFuzzer (clang only; the target is skipped for compilers without
-`-fsanitize=fuzzer`). `ctest` runs a 10 second smoke pass over a generated seed corpus; for a
-longer session:
+`-fsanitize=fuzzer`). `ctest` runs a smoke pass over a generated seed corpus with a fixed run
+count and seed, so it executes the same inputs on every machine; CI also replays the corpus once
+(`-runs=0`) as a blocking check and fuzzes for longer in a job that never blocks. For a longer
+session:
 
 ```sh
 cmake --build build --target fuzz_packager fuzz_corpus_generator

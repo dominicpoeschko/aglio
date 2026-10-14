@@ -101,8 +101,11 @@ else()
     target_link_libraries(fuzz_packager PRIVATE aglio::aglio)
     target_add_default_build_options(fuzz_packager PRIVATE)
     # -fno-sanitize-recover: without it UBSan findings print and continue, and the fuzzer sails past them.
-    target_compile_options(fuzz_packager PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
-                                                 ${aglio_sanitizer_ignorelist})
+    # -fno-sanitize-coverage=stack-depth: libFuzzer's stack-depth feature measures from the process's stack start, which
+    # ASLR moves, so the same input gave a different feature set in every process and a seeded run took a different path
+    # each time.
+    target_compile_options(fuzz_packager PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-coverage=stack-depth
+                                                 -fno-sanitize-recover=all ${aglio_sanitizer_ignorelist})
     target_link_options(fuzz_packager PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all)
 
     add_executable(fuzz_corpus_generator corpus_generator.cpp)
@@ -113,9 +116,21 @@ else()
     add_test(NAME fuzz_corpus_generate COMMAND fuzz_corpus_generator ${CMAKE_CURRENT_BINARY_DIR}/corpus)
     set_tests_properties(fuzz_corpus_generate PROPERTIES FIXTURES_SETUP fuzz_corpus)
 
-    # libFuzzer reads extra corpus directories without writing to them.
-    add_test(NAME fuzz_packager_smoke COMMAND fuzz_packager -max_total_time=10 ${CMAKE_CURRENT_BINARY_DIR}/corpus
-                                              ${CMAKE_CURRENT_SOURCE_DIR}/corpus_regressions)
+    # libFuzzer writes new inputs into the FIRST corpus directory and only reads the others. That first one is emptied
+    # before every run, so each run starts from the same generated corpus instead of the last run's findings.
+    set(fuzz_smoke_new ${CMAKE_CURRENT_BINARY_DIR}/fuzz_smoke_new)
+    add_test(NAME fuzz_smoke_clean COMMAND ${CMAKE_COMMAND} -E rm -rf ${fuzz_smoke_new})
+    add_test(NAME fuzz_smoke_mkdir COMMAND ${CMAKE_COMMAND} -E make_directory ${fuzz_smoke_new})
+    set_tests_properties(fuzz_smoke_clean fuzz_smoke_mkdir PROPERTIES FIXTURES_SETUP fuzz_corpus)
+    set_tests_properties(fuzz_smoke_mkdir PROPERTIES DEPENDS fuzz_smoke_clean)
+
+    # A fixed number of runs from a fixed seed, not -max_total_time: the same inputs on every machine and every run, so
+    # a pass does not depend on how fast the machine is. -use_cmp=0: compare tracing also records pointer operands,
+    # which ASLR changes, and feeds them into the mutations - with it the seed no longer fixes the inputs. -timeout only
+    # guards a single hanging input.
+    add_test(NAME fuzz_packager_smoke
+             COMMAND fuzz_packager -runs=300000 -seed=1 -use_cmp=0 -timeout=10 ${fuzz_smoke_new}
+                     ${CMAKE_CURRENT_BINARY_DIR}/corpus ${CMAKE_CURRENT_SOURCE_DIR}/corpus_regressions)
     set_tests_properties(fuzz_packager_smoke PROPERTIES FIXTURES_REQUIRED fuzz_corpus)
 endif()
 

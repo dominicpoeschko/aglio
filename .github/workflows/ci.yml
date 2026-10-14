@@ -47,7 +47,8 @@ jobs:
             - name: Run tests
               run: cd build && ctest --output-on-failure
 
-    # Longer libFuzzer run on the packager. Clang only until gcc supports -fsanitize=fuzzer.
+    # Replays the generated seed corpus and the committed regression inputs once each (-runs=0): same inputs on every
+    # machine, so it can block a merge. Clang only until gcc supports -fsanitize=fuzzer.
     fuzz:
         runs-on: ubuntu-latest
         container:
@@ -74,8 +75,45 @@ jobs:
             - name: Generate seed corpus
               run: ./build/fuzz_corpus_generator build/corpus
 
+            - name: Replay corpus
+              run: ./build/fuzz_packager -runs=0 -timeout=10 build/corpus tests/corpus_regressions
+
+    # Fuzzing is a search, not a test: a time-bounded run explores differently on every machine and every seed, so
+    # it never blocks. A crash marks this job red without failing the workflow; reproduce with the printed seed, and
+    # add the crash input to tests/corpus_regressions so the fuzz job replays it from then on.
+    fuzz-explore:
+        runs-on: ubuntu-latest
+        continue-on-error: true
+        container:
+            image: archlinux:latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+
+            - name: Set up C++ environment
+              run: |
+                pacman -Syu --noconfirm
+                pacman -S --noconfirm git cmake base-devel clang
+
+            - name: Configure CMake
+              run: cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON
+              env:
+                CC: clang
+                CXX: clang++
+
+            - name: Build fuzz target
+              run: cmake --build build --target fuzz_packager fuzz_corpus_generator
+
+            - name: Generate seed corpus
+              run: ./build/fuzz_corpus_generator build/corpus
+
             - name: Run fuzzer
-              run: ./build/fuzz_packager -max_total_time=300 -print_final_stats=1 build/corpus tests/corpus_regressions
+              run: |
+                seed=$(( $(od -An -N4 -tu4 /dev/urandom) % 2147483647 + 1 ))
+                echo "fuzz seed: $seed (reproduce: fuzz_packager -seed=$seed -max_total_time=300 <corpus dirs>)"
+                ./build/fuzz_packager -seed="$seed" -max_total_time=300 -timeout=10 -print_final_stats=1 \
+                    build/corpus tests/corpus_regressions
 
             # No node in the bare archlinux container, so act cannot run JS actions.
             - name: Upload crash artifacts
