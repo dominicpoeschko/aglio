@@ -108,10 +108,26 @@ static vector whose `max_size()` and `capacity()` are static and equal, such as
 `std::inplace_vector<std::byte, N>`. A fixed one is written in place, without a resize per field;
 if it also has `std::string`'s `resize_and_overwrite(n, op)`, nothing in it is filled first.
 
-A type whose serialized size is fixed (`aglio::has_fixed_serialized_size`: numbers, enums, arrays
+A type whose serialized size is fixed (`aglio::HasFixedSerializedSize`: numbers, enums, arrays
 and structs of them) costs one bounds check however many fields it has. If you specialize
 `aglio::serializer` for a type of your own, specialize `aglio::serialized_size` with it where the
 size is fixed; it has to be the number of bytes the serializer writes, or packing the type fails.
+
+A frame has a configured `MaxSize`, so a message that can grow (a static vector, an optional, a
+variant) can fail to pack at run time. Its worst case is known at compile time where every
+container in it has a static capacity: `aglio::max_serialized_size_v<T, Size_t>` (and the concept
+`aglio::HasMaxSerializedSize`) is the most bytes the serializer writes for any `T` -
+`std::vector`, `std::string` and `std::map` have no such bound. The packager adds its framing:
+
+```cpp
+static_assert(Packager::FrameOverhead == 2 + 2 + 2 + 2);             // start, size, header CRC, body CRC
+static_assert(Packager::max_packed_size<Telemetry> == Packager::FrameOverhead + 6);
+static_assert(Packager::always_fits<Telemetry>);                     // <= Packager::MaxFrameSize
+static_assert(Packager::requireAlwaysFits<Telemetry>());             // the same, failing with both sizes
+```
+
+A serializer of your own whose wire format is not the generic one for its type's shape states its
+bound as `static constexpr std::size_t max_serialized_size`.
 
 ### JSON
 

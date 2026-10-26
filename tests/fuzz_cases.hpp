@@ -17,11 +17,11 @@ namespace Test::fuzz {
 
 // ValueEq adds value equality on top of the byte oracle. Off for types with floating point members:
 // a fuzzed pattern can be a NaN, which never equals itself, so it would fire on a good round trip.
-template<typename Config_, typename Type_, bool ValueEq_ = true>
+template<typename CaseConfig, typename CaseType, bool CaseValueEq = true>
 struct Case {
-    using Config                  = Config_;
-    using Type                    = Type_;
-    static constexpr bool ValueEq = ValueEq_;
+    using Config                  = CaseConfig;
+    using Type                    = CaseType;
+    static constexpr bool ValueEq = CaseValueEq;
 };
 
 using Cases = std::tuple<Case<packager::Configs::Minimal, Types::Container>,
@@ -49,8 +49,8 @@ inline constexpr std::size_t CaseCount{std::tuple_size_v<Cases>};
 
 // Invokes f with a Case tag, which picks the packager instantiation at compile time.
 template<typename F>
-constexpr void with_case(std::size_t index,
-                         F&&         f) {
+constexpr void withCase(std::size_t index,
+                        F&&         f) {
     [&]<std::size_t... Is>(std::index_sequence<Is...>) {
         static_cast<void>(
           ((Is == index ? (f(std::tuple_element_t<Is, Cases>{}), true) : false) || ...));
@@ -59,13 +59,13 @@ constexpr void with_case(std::size_t index,
 
 // Built from `value` so seeds get a fixed one and the mutator can vary it.
 template<typename Config>
-constexpr auto header_data_seed(unsigned int value = 1) {
+constexpr auto headerDataSeed(unsigned int value = 1) {
     typename Config::HeaderData info{};
     if constexpr(std::is_integral_v<typename Config::HeaderData>) {
-        info = static_cast<decltype(info)>(value & 0xFFu);
-    } else if constexpr(requires { info.msg_type = 1; }) {
-        info.msg_type = static_cast<std::uint8_t>(value & 0xFFu);
-        info.channel  = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+        info = static_cast<decltype(info)>(value & 0xFFU);
+    } else if constexpr(requires { info.msgType = 1; }) {
+        info.msgType = static_cast<std::uint8_t>(value & 0xFFU);
+        info.channel = static_cast<std::uint8_t>((value >> 8) & 0xFFU);
     }
     return info;
 }
@@ -80,12 +80,12 @@ struct RawBody {
 template<typename Case,
          typename Buffer,
          typename T>
-bool pack_case(Buffer&      buffer,
-               T const&     value,
-               unsigned int headerValue = 1) {
+bool packCase(Buffer&      buffer,
+              T const&     value,
+              unsigned int headerValue = 1) {
     using Packager = aglio::Packager<typename Case::Config>;
     if constexpr(requires { typename Case::Config::HeaderData; }) {
-        return Packager::pack(buffer, value, header_data_seed<typename Case::Config>(headerValue));
+        return Packager::pack(buffer, value, headerDataSeed<typename Case::Config>(headerValue));
     } else {
         return Packager::pack(buffer, value);
     }
@@ -94,8 +94,8 @@ bool pack_case(Buffer&      buffer,
 }   // namespace Test::fuzz
 
 namespace aglio {
-template<typename Size_t>
-struct serializer<Test::fuzz::RawBody, Size_t> {
+template<typename SizeT>
+struct serializer<Test::fuzz::RawBody, SizeT> {
     template<typename Buffer>
     static bool serialize(Test::fuzz::RawBody const& v,
                           Buffer&                    buffer) {

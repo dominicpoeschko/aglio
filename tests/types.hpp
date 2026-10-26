@@ -19,6 +19,7 @@ namespace Types {
 // Enum types for testing
 enum class Color : std::uint8_t { Red = 1, Green = 2, Blue = 3 };
 
+// The unscoped enum is the case under test (wire size of int).
 enum Status { Unknown = 0, Active = 1, Inactive = 2 };
 
 // All primitive types
@@ -56,7 +57,7 @@ struct Container {
 // Map and set containers
 struct Associative {
     std::map<int, std::string> map{};
-    std::map<int, int>         int_map{};
+    std::map<int, int>         intMap{};
     std::set<int>              set{};
 
     constexpr auto operator<=>(Associative const&) const = default;
@@ -64,13 +65,13 @@ struct Associative {
 
 // optional, variant, tuple, pair, expected
 struct Wrapper {
-    std::optional<int>                    opt_some{};
-    std::optional<int>                    opt_none{};
+    std::optional<int>                    optSome{};
+    std::optional<int>                    optNone{};
     std::variant<int, float, std::string> var{};
     std::tuple<int, float, std::string>   tup{};
     std::pair<int, std::string>           pr{};
-    std::expected<int, std::string>       exp_val{};
-    std::expected<int, std::string>       exp_err{};
+    std::expected<int, std::string>       expVal{};
+    std::expected<int, std::string>       expErr{};
 
     constexpr bool operator==(Wrapper const&) const = default;
 };
@@ -78,13 +79,13 @@ struct Wrapper {
 // Float-free counterpart of Wrapper: variant, tuple and expected appear nowhere else, and a fuzzed
 // NaN would break the value-equality oracle.
 struct WrapperNoFloat {
-    std::optional<int>                   opt_some{};
-    std::optional<int>                   opt_none{};
+    std::optional<int>                   optSome{};
+    std::optional<int>                   optNone{};
     std::variant<int, char, std::string> var{};
     std::tuple<int, char, std::string>   tup{};
     std::pair<int, std::string>          pr{};
-    std::expected<int, std::string>      exp_val{};
-    std::expected<int, std::string>      exp_err{};
+    std::expected<int, std::string>      expVal{};
+    std::expected<int, std::string>      expErr{};
 
     constexpr bool operator==(WrapperNoFloat const&) const = default;
 };
@@ -102,8 +103,8 @@ struct ExpectedVoid {
 struct MoreContainers {
     std::deque<int>            deq{};
     std::list<int>             lst{};
-    std::set<std::string>      str_set{};
-    std::array<std::string, 2> str_arr{};
+    std::set<std::string>      strSet{};
+    std::array<std::string, 2> strArr{};
     std::vector<std::uint8_t>  bytes{};
     // Proxy references rather than bool&, which the element deserializer assigns through.
     std::vector<bool> flags{};
@@ -116,17 +117,17 @@ struct EmptyContainers {
     std::vector<int>                vec{};
     std::map<int, int>              map{};
     std::string                     str{};
-    std::optional<std::vector<int>> opt_empty_vec{};
+    std::optional<std::vector<int>> optEmptyVec{};
 
     bool operator==(EmptyContainers const&) const = default;
 };
 
 // Wrappers nested in wrappers, plus a variant alternative that is itself a container.
 struct NestedWrappers {
-    std::optional<std::optional<int>>          opt_opt{};
-    std::optional<std::optional<int>>          opt_of_empty{};
-    std::optional<std::pair<int, std::string>> opt_pair{};
-    std::variant<int, std::vector<int>>        var_vec{};
+    std::optional<std::optional<int>>          optOpt{};
+    std::optional<std::optional<int>>          optOfEmpty{};
+    std::optional<std::pair<int, std::string>> optPair{};
+    std::variant<int, std::vector<int>>        varVec{};
 
     bool operator==(NestedWrappers const&) const = default;
 };
@@ -168,17 +169,17 @@ struct Chrono {
 
 // Nested/complex structures
 struct Nested {
-    std::vector<std::vector<int>>            nested_vec{};
-    std::optional<std::vector<std::string>>  opt_vec{};
-    std::map<std::string, std::vector<int>>  map_of_vecs{};
-    std::vector<std::pair<int, std::string>> vec_of_pairs{};
+    std::vector<std::vector<int>>            nestedVec{};
+    std::optional<std::vector<std::string>>  optVec{};
+    std::map<std::string, std::vector<int>>  mapOfVecs{};
+    std::vector<std::pair<int, std::string>> vecOfPairs{};
 
     constexpr auto operator<=>(Nested const&) const = default;
 };
 
 // Enum types
 struct Enum {
-    Color  color{};
+    Color  color{Color::Red};
     Status status{};
 
     constexpr auto operator<=>(Enum const&) const = default;
@@ -189,7 +190,7 @@ struct Enum {
 // defined.
 struct EnumUnknown {
     Color unknown{static_cast<Color>(7)};
-    Color out_of_range{static_cast<Color>(200)};
+    Color outOfRange{static_cast<Color>(200)};
 
     constexpr auto operator<=>(EnumUnknown const&) const = default;
 };
@@ -209,20 +210,23 @@ struct ContiguousSet {
     using iterator       = typename std::array<T, Cap>::iterator;
     using const_iterator = typename std::array<T, Cap>::const_iterator;
 
+    // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization) // slots past size_ are storage, no element
     std::array<T, Cap> data_{};
     std::size_t        size_{0};
 
     iterator begin() noexcept AGLIO_LIFETIMEBOUND { return data_.begin(); }
 
-    const_iterator begin() const noexcept AGLIO_LIFETIMEBOUND { return data_.begin(); }
+    [[nodiscard]] const_iterator begin() const noexcept AGLIO_LIFETIMEBOUND {
+        return data_.begin();
+    }
 
     iterator end() noexcept { return std::next(data_.begin(), static_cast<std::ptrdiff_t>(size_)); }
 
-    const_iterator end() const noexcept {
+    [[nodiscard]] const_iterator end() const noexcept {
         return std::next(data_.begin(), static_cast<std::ptrdiff_t>(size_));
     }
 
-    std::size_t size() const noexcept { return size_; }
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
 
     void clear() noexcept { size_ = 0; }
 
@@ -255,6 +259,12 @@ struct ContiguousAssociative {
 template<typename T>
 T createDefault();
 
+// Samples whose printed form check_format compares, not pi and e.
+// NOLINTBEGIN(modernize-use-std-numbers) // short decimals on purpose
+inline constexpr float  SampleF32 = 3.14159f;
+inline constexpr double SampleF64 = 2.71828;
+// NOLINTEND(modernize-use-std-numbers)
+
 template<>
 Primitive createDefault<Primitive>() {
     return Primitive{.i8   = -42,
@@ -265,8 +275,8 @@ Primitive createDefault<Primitive>() {
                      .u16  = 1234,
                      .u32  = 123456,
                      .u64  = 12345678901ULL,
-                     .f32  = 3.14159f,
-                     .f64  = 2.71828,
+                     .f32  = SampleF32,
+                     .f64  = SampleF64,
                      .flag = true};
 }
 
@@ -282,35 +292,35 @@ Container createDefault<Container>() {
 template<>
 Associative createDefault<Associative>() {
     return Associative{
-      .map     = {{1, "one"}, {2, "two"}, {3, "three"}},
-      .int_map = {{1, 1}, {2, 2}, {3, 3}},
-      .set     = {10, 20, 30, 40}
+      .map    = {{1, "one"}, {2, "two"}, {3, "three"}},
+      .intMap = {{1, 1}, {2, 2}, {3, 3}},
+      .set    = {10, 20, 30, 40}
     };
 }
 
 template<>
 Wrapper createDefault<Wrapper>() {
     return Wrapper{
-      .opt_some = 42,
-      .opt_none = std::nullopt,
-      .var      = std::string("variant_string"),
-      .tup      = {100, 3.14f, "tuple_str"},
-      .pr       = {200, "pair_str"},
-      .exp_val  = 99,
-      .exp_err  = std::unexpected{std::string("error_msg")}
+      .optSome = 42,
+      .optNone = std::nullopt,
+      .var     = std::string("variant_string"),
+      .tup     = {100, 3.14f, "tuple_str"},
+      .pr      = {200, "pair_str"},
+      .expVal  = 99,
+      .expErr  = std::unexpected{std::string("error_msg")}
     };
 }
 
 template<>
 WrapperNoFloat createDefault<WrapperNoFloat>() {
     return WrapperNoFloat{
-      .opt_some = 42,
-      .opt_none = std::nullopt,
-      .var      = std::string("variant_string"),
-      .tup      = {100, 'c', "tuple_str"},
-      .pr       = {200, "pair_str"},
-      .exp_val  = 99,
-      .exp_err  = std::unexpected{std::string("error_msg")}
+      .optSome = 42,
+      .optNone = std::nullopt,
+      .var     = std::string("variant_string"),
+      .tup     = {100, 'c', "tuple_str"},
+      .pr      = {200, "pair_str"},
+      .expVal  = 99,
+      .expErr  = std::unexpected{std::string("error_msg")}
     };
 }
 
@@ -322,27 +332,27 @@ ExpectedVoid createDefault<ExpectedVoid>() {
 template<>
 MoreContainers createDefault<MoreContainers>() {
     return MoreContainers{
-      .deq     = {1, 2, 3},
-      .lst     = {4, 5},
-      .str_set = {"alpha", "beta"},
-      .str_arr = {"one", "two"},
-      .bytes   = {65, 66},
-      .flags   = {true, false, true}
+      .deq    = {1, 2, 3},
+      .lst    = {4, 5},
+      .strSet = {"alpha", "beta"},
+      .strArr = {"one", "two"},
+      .bytes  = {65, 66},
+      .flags  = {true, false, true}
     };
 }
 
 template<>
 EmptyContainers createDefault<EmptyContainers>() {
-    return EmptyContainers{.vec = {}, .map = {}, .str = {}, .opt_empty_vec = std::vector<int>{}};
+    return EmptyContainers{.vec = {}, .map = {}, .str = {}, .optEmptyVec = std::vector<int>{}};
 }
 
 template<>
 NestedWrappers createDefault<NestedWrappers>() {
     return NestedWrappers{
-      .opt_opt      = std::optional<int>{7},
-      .opt_of_empty = std::optional<int>{},
-      .opt_pair     = std::pair<int, std::string>{1, "x"},
-      .var_vec      = std::vector<int>{1, 2}
+      .optOpt     = std::optional<int>{7},
+      .optOfEmpty = std::optional<int>{},
+      .optPair    = std::pair<int, std::string>{1, "x"},
+      .varVec     = std::vector<int>{1, 2}
     };
 }
 
@@ -372,10 +382,10 @@ Chrono createDefault<Chrono>() {
 template<>
 Nested createDefault<Nested>() {
     return Nested{
-      .nested_vec   = {{1, 2, 3}, {4, 5}, {6, 7, 8, 9}},
-      .opt_vec      = std::vector<std::string>{"opt1", "opt2", "opt3"},
-      .map_of_vecs  = {{"key1", {1, 2, 3}}, {"key2", {4, 5}}},
-      .vec_of_pairs = {{1, "first"}, {2, "second"}, {3, "third"}}
+      .nestedVec  = {{1, 2, 3}, {4, 5}, {6, 7, 8, 9}},
+      .optVec     = std::vector<std::string>{"opt1", "opt2", "opt3"},
+      .mapOfVecs  = {{"key1", {1, 2, 3}}, {"key2", {4, 5}}},
+      .vecOfPairs = {{1, "first"}, {2, "second"}, {3, "third"}}
     };
 }
 

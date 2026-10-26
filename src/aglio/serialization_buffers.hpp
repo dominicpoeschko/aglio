@@ -19,9 +19,9 @@ public:
     constexpr explicit DynamicSerializationView(Buffer& buffer AGLIO_LIFETIMEBOUND)
       : buffer_{buffer} {}
 
-    constexpr std::size_t size() const { return position_; }
+    [[nodiscard]] constexpr std::size_t size() const { return position_; }
 
-    constexpr std::byte const* data() const { return buffer_.data(); }
+    [[nodiscard]] constexpr std::byte const* data() const { return buffer_.data(); }
 
     /// A fixed-size field copies with a constant length. Only into a buffer that does not grow;
     /// the others take the insert below.
@@ -33,7 +33,7 @@ public:
             return true;
         } else if constexpr(!requires { buffer_.resize(1); }) {
             if(N > static_cast<std::size_t>(buffer_.size()) - position_) { return false; }
-            detail::copy_fixed<N>(
+            detail::copyFixed<N>(
               std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)),
               data.data());
             position_ += N;
@@ -65,7 +65,8 @@ public:
 
     constexpr bool insert(std::span<std::byte const> data) {
         if(data.size_bytes() == 0) { return true; }
-        auto available = [&]() { return static_cast<std::size_t>(buffer_.size()) - position_; };
+        auto const available
+          = [&]() { return static_cast<std::size_t>(buffer_.size()) - position_; };
         if(data.size_bytes() > available()) {
             if constexpr(requires { buffer_.resize(1); }) {
                 auto const newSize
@@ -100,7 +101,7 @@ public:
     constexpr explicit DynamicDeserializationView(Buffer& buffer AGLIO_LIFETIMEBOUND)
       : buffer_{buffer} {}
 
-    constexpr std::size_t size() const { return buffer_.size(); }
+    [[nodiscard]] constexpr std::size_t size() const { return buffer_.size(); }
 
     constexpr auto data() { return buffer_.data(); }
 
@@ -108,7 +109,7 @@ public:
 
     constexpr void unskip(std::size_t length) { position_ -= length; }
 
-    constexpr std::size_t available() const {
+    [[nodiscard]] constexpr std::size_t available() const {
         return static_cast<std::size_t>(buffer_.size()) - position_;
     }
 
@@ -136,7 +137,7 @@ public:
             return true;
         } else {
             if(N > available()) { return false; }
-            detail::copy_fixed<N>(
+            detail::copyFixed<N>(
               data.data(),
               std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)));
             position_ += N;
@@ -188,7 +189,9 @@ public:
     constexpr explicit StreamDeserializationView(Stream& stream AGLIO_LIFETIMEBOUND)
       : stream_{stream} {}
 
-    constexpr std::size_t size() const { return std::numeric_limits<std::size_t>::max(); }
+    [[nodiscard]] constexpr std::size_t size() const {
+        return std::numeric_limits<std::size_t>::max();
+    }
 
     constexpr bool extract(std::span<std::byte> data) {
         if(data.size_bytes() == 0) { return true; }

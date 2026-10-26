@@ -6,7 +6,7 @@
 
 namespace aglio {
 
-// Alias glaze's reflectable concept for compatibility
+// A type aglio describes field by field: one glaze reflects, and not a number, an enum or a range
 template<typename T>
 concept Described = glz::has_reflect<T> && !std::is_integral_v<T> && !std::is_floating_point_v<T>
                  && !std::is_enum_v<T> && !std::ranges::range<T>;

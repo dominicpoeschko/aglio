@@ -149,3 +149,19 @@ foreach(fail_test compile_fail_with_ref compile_fail_with_struct_ref)
             ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR} -DTARGET=${fail_test}
             -DEXPECTED_MESSAGE=${COMPILE_FAIL_EXPECTED_MESSAGE} -P ${CMAKE_CURRENT_SOURCE_DIR}/compile_fail_test.cmake)
 endforeach()
+
+# Packager::requireAlwaysFits: a type too big for the frame, and one without a worst case, each fail with their own
+# message.
+foreach(fail_case "compile_fail_frame_too_small|packs into a frame longer than the"
+                  "compile_fail_no_worst_case|has no worst-case wire size")
+    string(REPLACE "|" ";" fail_case "${fail_case}")
+    list(GET fail_case 0 fail_test)
+    list(GET fail_case 1 fail_message)
+    add_library(${fail_test} OBJECT EXCLUDE_FROM_ALL ${fail_test}.cpp)
+    target_link_libraries(${fail_test} PRIVATE aglio::aglio)
+    target_add_default_build_options(${fail_test} PRIVATE)
+
+    add_test(NAME ${fail_test}
+             COMMAND ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR} -DTARGET=${fail_test}
+                     "-DEXPECTED_MESSAGE=${fail_message}" -P ${CMAKE_CURRENT_SOURCE_DIR}/compile_fail_test.cmake)
+endforeach()

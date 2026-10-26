@@ -25,6 +25,9 @@
     #include <variant>
     #include <vector>
 
+// A test-only opt-in: the std::optional, std::expected and std::variant formatters below name no
+// program-defined type ([namespace.std]); accepted for tests that print those.
+// NOLINTBEGIN(bugprone-std-namespace-modification) // test-only opt-in, see above
 template<aglio::Described T>
 struct std::formatter<T>;
 
@@ -44,8 +47,8 @@ concept StringLike = IsStdString<T> || IsStdStringView<T> || IsCharPtr<T>;
 
 template<typename OutputIt,
          typename T>
-auto print_value(OutputIt out,
-                 T const& value) {
+auto printValue(OutputIt out,
+                T const& value) {
     if constexpr(StringLike<T>) {
         return std::format_to(out, "\"{}\"", value);
     } else {
@@ -67,11 +70,10 @@ struct std::formatter<std::optional<T>> {
                 FormatContext&          ctx) const {
         if(opt.has_value()) {
             auto out = std::format_to(ctx.out(), "optional(");
-            out      = aglio::format::detail::print_value(out, *opt);
+            out      = aglio::format::detail::printValue(out, *opt);
             return std::format_to(out, ")");
-        } else {
-            return std::format_to(ctx.out(), "none");
         }
+        return std::format_to(ctx.out(), "none");
     }
 };
 
@@ -89,13 +91,12 @@ struct std::formatter<std::expected<T, E>> {
                 FormatContext&          ctx) const {
         if(v.has_value()) {
             auto out = std::format_to(ctx.out(), "expected(");
-            if constexpr(!std::is_void_v<T>) { out = aglio::format::detail::print_value(out, *v); }
-            return std::format_to(out, ")");
-        } else {
-            auto out = std::format_to(ctx.out(), "unexpected(");
-            out      = aglio::format::detail::print_value(out, v.error());
+            if constexpr(!std::is_void_v<T>) { out = aglio::format::detail::printValue(out, *v); }
             return std::format_to(out, ")");
         }
+        auto out = std::format_to(ctx.out(), "unexpected(");
+        out      = aglio::format::detail::printValue(out, v.error());
+        return std::format_to(out, ")");
     }
 };
 
@@ -112,15 +113,18 @@ struct std::formatter<std::variant<Ts...>> {
                 FormatContext&             ctx) const {
         auto out = std::format_to(ctx.out(), "variant(");
         std::visit(
-          [&out](auto const& value) { out = aglio::format::detail::print_value(out, value); },
+          [&out](auto const& value) { out = aglio::format::detail::printValue(out, value); },
           v);
         return std::format_to(out, ")");
     }
 };
 
+// NOLINTEND(bugprone-std-namespace-modification)
+
 #endif
 
 template<aglio::Described T>
+// NOLINTNEXTLINE(bugprone-std-namespace-modification) // a Described type is program-defined ([namespace.std])
 struct std::formatter<T> {
     template<typename ParseContext>
     constexpr auto parse(ParseContext& ctx) const {

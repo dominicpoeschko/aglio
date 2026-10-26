@@ -13,7 +13,7 @@ void test() {
     auto const t = Types::createDefault<Type>();
     auto const s = std::format("{}", t);
 
-    Test::check_format<Type, Test::Api::Format>(s);
+    Test::checkFormat<Type, Test::Api::Format>(s);
 }
 }   // namespace Test::format
 

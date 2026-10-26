@@ -29,11 +29,11 @@ jobs:
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel ${{ matrix.compiler.cc == 'clang' && 'clang' || '' }} ${{ matrix.compiler.stdlib == 'libc++' && 'libc++ lld' || '' }}
+                pacman -S --noconfirm git cmake base-devel python ${{ matrix.compiler.cc == 'clang' && 'clang' || '' }} ${{ matrix.compiler.stdlib == 'libc++' && 'libc++ lld' || '' }}
 
             - name: Configure CMake
               run: >
-                cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON
+                cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
                 ${{ matrix.compiler.sanitizer && format('-DUSE_SANITIZER={0}', matrix.compiler.sanitizer) || '' }}
                 ${{ matrix.compiler.stdlib && format('-DUSE_STD_LIB={0}', matrix.compiler.stdlib) || '' }}
                 ${{ matrix.compiler.stdlib_debug && '-DUSE_STDLIB_DEBUG=true' || '' }}
@@ -46,6 +46,15 @@ jobs:
 
             - name: Run tests
               run: cd build && ctest --output-on-failure
+
+            # clang-tidy (Kvasir_SDK master's tools/tidy.py and .clang-tidy, .github/actions/tidy) over this tree:
+            # this repository's findings fail, the libraries' are counted as foreign
+            - name: clang-tidy
+              if: matrix.compiler.cc == 'clang' && !matrix.compiler.sanitizer
+              uses: kvasir-io/Kvasir_SDK/.github/actions/tidy@master
+              timeout-minutes: 30
+              with:
+                trees: build
 
     # Replays the generated seed corpus and the committed regression inputs once each (-runs=0): same inputs on every
     # machine, so it can block a merge. Clang only until gcc supports -fsanitize=fuzzer.
@@ -76,16 +85,23 @@ jobs:
               run: ./build/fuzz_corpus_generator build/corpus
 
             - name: Replay corpus
-              run: ./build/fuzz_packager -runs=0 -timeout=10 build/corpus tests/corpus_regressions
+              run: >
+                tests/run_fuzzer.sh build/fuzz-logs/packager.log
+                ./build/fuzz_packager -runs=0 -timeout=10 build/corpus tests/corpus_regressions
 
     # Fuzzing is a search, not a test: a time-bounded run explores differently on every machine and every seed, so
     # it never blocks. A crash marks this job red without failing the workflow; reproduce with the printed seed, and
-    # add the crash input to tests/corpus_regressions so the fuzz job replays it from then on.
+    # add the crash input to tests/corpus_regressions so the fuzz job replays it from then on. The fuzzer runs through
+    # tests/run_fuzzer.sh: its output goes to fuzz-logs/ (uploaded with the crashes), the step shows the summary, or
+    # the end of the log on a failure.
     fuzz-explore:
         runs-on: ubuntu-latest
         continue-on-error: true
         container:
             image: archlinux:latest
+        # FUZZ_SECONDS in the environment overrides the 300 s (act: --env FUZZ_SECONDS=10)
+        env:
+            FUZZ_DEFAULT_SECONDS: '300'
 
         steps:
             - name: Checkout repository
@@ -111,8 +127,10 @@ jobs:
             - name: Run fuzzer
               run: |
                 seed=$(( $(od -An -N4 -tu4 /dev/urandom) % 2147483647 + 1 ))
-                echo "fuzz seed: $seed (reproduce: fuzz_packager -seed=$seed -max_total_time=300 <corpus dirs>)"
-                ./build/fuzz_packager -seed="$seed" -max_total_time=300 -timeout=10 -print_final_stats=1 \
+                time=${FUZZ_SECONDS:-$FUZZ_DEFAULT_SECONDS}
+                echo "fuzz seed: $seed (reproduce: fuzz_packager -seed=$seed -max_total_time=$time <corpus dirs>)"
+                tests/run_fuzzer.sh fuzz-logs/packager.log \
+                    ./build/fuzz_packager -seed="$seed" -max_total_time="$time" -timeout=10 -print_final_stats=1 \
                     build/corpus tests/corpus_regressions
 
             # No node in the bare archlinux container, so act cannot run JS actions.
@@ -124,6 +142,7 @@ jobs:
                 path: |
                   crash-*
                   leak-*
+                  fuzz-logs/
                   timeout-*
                   oom-*
                 if-no-files-found: ignore

@@ -8,4 +8,4 @@ crash-*
 leak-*
 timeout-*
 oom-*
-justfile
+fuzz-logs/

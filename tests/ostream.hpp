@@ -16,7 +16,7 @@ void test() {
 
     auto const s = ss.str();
 
-    Test::check_format<Type, Test::Api::Ostream>(s);
+    Test::checkFormat<Type, Test::Api::Ostream>(s);
 }
 }   // namespace Test::ostream
 

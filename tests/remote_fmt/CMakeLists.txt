@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 project(aglio_remote_fmt_tests)
 
 # Standalone on purpose: src/aglio/remote_fmt.hpp compiles to nothing - silently - unless remote_fmt is present, and
-# keeping this out of tests/CMakeLists.txt spares the default build string_constant and nlohmann_json.
+# keeping this out of tests/CMakeLists.txt spares the default build remote_fmt and string_constant.
 
 include(FetchContent)
 
@@ -41,7 +41,7 @@ endif()
 
 # Propagate stdlib/sanitizer flags into the fetched dependencies so libc++/debug-ABI builds link. INTERFACE libraries
 # are skipped: they compile nothing, and the helpers set non-INTERFACE properties, which is an error on those targets.
-foreach(dep_target fmt nlohmann_json)
+foreach(dep_target fmt)
     if(TARGET ${dep_target})
         get_target_property(_imported ${dep_target} IMPORTED)
         get_target_property(_type ${dep_target} TYPE)

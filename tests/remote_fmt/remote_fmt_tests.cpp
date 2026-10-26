@@ -50,10 +50,10 @@ std::optional<std::string> roundTrip(auto fmtString,
                                      Args&&... args) {
     remote_fmt::Printer<VectorBackend> printer{};
     printer.print(fmtString, std::forward<Args>(args)...);
-    auto const& buffer = printer.get_com_backend().memory;
+    auto const& buffer = printer.getComBackend().memory;
 
-    auto const [message, remaining, discarded]
-      = remote_fmt::parse(std::span{buffer}, emptyCatalog(), [](std::string_view error) {
+    auto const [message, remaining, discarded, catalogId]
+      = remote_fmt::parseMessage(std::span{buffer}, emptyCatalog(), [](std::string_view error) {
             std::printf("parser error: %.*s\n", static_cast<int>(error.size()), error.data());
         });
 
@@ -119,7 +119,7 @@ template<typename T>
 void checkTypesEntry() {
     constexpr auto name = glz::type_name<T>;
     check(roundTrip("{}"_sc, Types::createDefault<T>()),
-          Test::expected_format<T, Test::Api::RemoteFmt>(),
+          Test::expectedFormat<T, Test::Api::RemoteFmt>(),
           std::string{name}.c_str());
 }
 

@@ -12,12 +12,9 @@
 
 // Tells clang that a returned reference or a constructed object refers to this argument, so its lifetime analysis can
 // see a dangling use. Nothing on other compilers.
-#if defined(__has_cpp_attribute)
-    #if __has_cpp_attribute(clang::lifetimebound)
-        #define AGLIO_LIFETIMEBOUND [[clang::lifetimebound]]
-    #endif
-#endif
-#ifndef AGLIO_LIFETIMEBOUND
+#if __has_cpp_attribute(clang::lifetimebound)
+    #define AGLIO_LIFETIMEBOUND [[clang::lifetimebound]]
+#else
     #define AGLIO_LIFETIMEBOUND
 #endif
 
@@ -26,8 +23,8 @@ namespace aglio { namespace detail {
     /// Copies N bytes as loads and stores. The builtin on purpose: with -ffreestanding,
     /// std::memcpy stays a real call even for one byte.
     template<std::size_t N>
-    AGLIO_INLINE void copy_fixed(void*       to,
-                                 void const* from) noexcept {
+    AGLIO_INLINE void copyFixed(void*       to,
+                                void const* from) noexcept {
 #if defined(__GNUC__) || defined(__clang__)
         __builtin_memcpy(to, from, N);
 #else

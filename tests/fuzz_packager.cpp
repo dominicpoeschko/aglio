@@ -27,9 +27,9 @@ struct BoundedBuffer {
 
     std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
-    std::size_t size() const { return sz; }
+    [[nodiscard]] std::size_t size() const { return sz; }
 
-    std::size_t max_size() const { return limit; }
+    [[nodiscard]] std::size_t max_size() const { return limit; }
 
     auto begin() AGLIO_LIFETIMEBOUND { return storage.begin(); }
 
@@ -46,7 +46,7 @@ struct FixedBuffer {
 
     static constexpr std::size_t max_size() { return N; }
 
-    std::size_t size() const { return sz; }
+    [[nodiscard]] std::size_t size() const { return sz; }
 
     std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
@@ -79,27 +79,27 @@ struct RawFixedBuffer : FixedBuffer<N> {
 };
 
 static_assert(aglio::detail::fixed_capacity_v<FixedBuffer<8>>);
-static_assert(aglio::detail::overwritable<RawFixedBuffer<8>>);
+static_assert(aglio::detail::Overwritable<RawFixedBuffer<8>>);
 
 template<typename Case,
          typename T>
-void pack_bounded(T const&    value,
-                  std::size_t limit) {
+void packBounded(T const&    value,
+                 std::size_t limit) {
     BoundedBuffer buffer{};
     buffer.limit = limit;
-    static_cast<void>(Test::fuzz::pack_case<Case>(buffer, value));
+    static_cast<void>(Test::fuzz::packCase<Case>(buffer, value));
 }
 
 // Packs as it arrived: with the observed header data for HeaderData configs, without for the rest.
 template<typename Case,
          typename Buffer,
          typename Result>
-bool pack_like(Buffer&                    buffer,
-               typename Case::Type const& value,
-               Result const&              result) {
+bool packLike(Buffer&                    buffer,
+              typename Case::Type const& value,
+              Result const&              result) {
     using Packager = aglio::Packager<typename Case::Config>;
-    if constexpr(requires { Packager::pack(buffer, value, result.header_data); }) {
-        return Packager::pack(buffer, value, result.header_data);
+    if constexpr(requires { Packager::pack(buffer, value, result.headerData); }) {
+        return Packager::pack(buffer, value, result.headerData);
     } else {
         return Packager::pack(buffer, value);
     }
@@ -114,15 +114,15 @@ bool pack_like(Buffer&                    buffer,
 template<typename Case,
          typename Fixed,
          typename Result>
-void check_fixed(typename Case::Type const&    value,
-                 Result const&                 result,
-                 std::vector<std::byte> const& want,
-                 std::size_t                   prefix) {
+void checkFixed(typename Case::Type const&    value,
+                Result const&                 result,
+                std::vector<std::byte> const& want,
+                std::size_t                   prefix) {
     constexpr std::size_t N = Fixed::capacity();
     Fixed                 fixed{};
     fixed.FixedBuffer<N>::resize(prefix);
     for(std::size_t i = 0; i < prefix; ++i) { fixed.storage[i] = std::byte(0xC0 + i); }
-    bool const ok = pack_like<Case>(fixed, value, result);
+    bool const ok = packLike<Case>(fixed, value, result);
     if(ok != (prefix + want.size() <= N)) { std::abort(); }
     if(!ok && fixed.size() != prefix) { std::abort(); }
     if(ok) {
@@ -139,20 +139,20 @@ void check_fixed(typename Case::Type const&    value,
 
 template<typename Case,
          typename Result>
-void check_round_trip(typename Case::Type const& value,
-                      Result const&              result) {
+void checkRoundTrip(typename Case::Type const& value,
+                    Result const&              result) {
     using Packager = aglio::Packager<typename Case::Config>;
 
     std::vector<std::byte> first{};
     // Repacking can legitimately fail, e.g. when the body no longer fits Config::MaxSize.
-    if(!pack_like<Case>(first, value, result)) { return; }
+    if(!packLike<Case>(first, value, result)) { return; }
 
     typename Case::Type again{};
     auto const          againResult = Packager::unpack(first, again);
     if(!againResult) { std::abort(); }
     if(againResult->consumed != first.size()) { std::abort(); }
-    if constexpr(requires { result.header_data; }) {
-        if(!(againResult->header_data == result.header_data)) { std::abort(); }
+    if constexpr(requires { result.headerData; }) {
+        if(!(againResult->headerData == result.headerData)) { std::abort(); }
     }
     if constexpr(Case::ValueEq) {
         if(!(again == value)) { std::abort(); }
@@ -160,15 +160,15 @@ void check_round_trip(typename Case::Type const& value,
 
     // Same value, same package.
     std::vector<std::byte> second{};
-    if(!pack_like<Case>(second, again, *againResult)) { std::abort(); }
+    if(!packLike<Case>(second, again, *againResult)) { std::abort(); }
     if(first != second) { std::abort(); }
 
     // A fixed-capacity buffer gives the same package behind what it already holds, and fits it
     // exactly when the vector's package fits in the room left; a failure leaves it as it was.
-    check_fixed<Case, FixedBuffer<4096>>(again, *againResult, first, 3);
-    check_fixed<Case, RawFixedBuffer<64>>(again, *againResult, first, 5);
-    check_fixed<Case, FixedBuffer<64>>(again, *againResult, first, 5);
-    check_fixed<Case, RawFixedBuffer<4096>>(again, *againResult, first, 3);
+    checkFixed<Case, FixedBuffer<4096>>(again, *againResult, first, 3);
+    checkFixed<Case, RawFixedBuffer<64>>(again, *againResult, first, 5);
+    checkFixed<Case, FixedBuffer<64>>(again, *againResult, first, 5);
+    checkFixed<Case, RawFixedBuffer<4096>>(again, *againResult, first, 3);
 }
 
 template<typename Case>
@@ -182,7 +182,7 @@ void run(std::span<std::byte const> wire,
     std::vector<std::uint8_t> wireAsRange{};
     wireAsRange.reserve(wire.size());
     for(auto b : wire) { wireAsRange.push_back(static_cast<std::uint8_t>(b)); }
-    pack_bounded<Case>(wireAsRange, packLimit);
+    packBounded<Case>(wireAsRange, packLimit);
 
     auto span = wire;
     while(!span.empty()) {
@@ -198,8 +198,8 @@ void run(std::span<std::byte const> wire,
         if(consumed == 0) { break; }
 
         if(result) {
-            check_round_trip<Case>(value, *result);
-            pack_bounded<Case>(value, packLimit);
+            checkRoundTrip<Case>(value, *result);
+            packBounded<Case>(value, packLimit);
         }
 
         span = span.subspan(consumed);
@@ -238,9 +238,9 @@ bool reframe(std::span<std::byte const> material,
     for(std::size_t part = 0; part < parts; ++part) {
         auto const remaining = material.size() - offset;
         auto const take      = part + 1 == parts ? remaining : remaining / (parts - part);
-        if(!Test::fuzz::pack_case<Case>(out,
-                                        Test::fuzz::RawBody{material.subspan(offset, take)},
-                                        seed >> 3))
+        if(!Test::fuzz::packCase<Case>(out,
+                                       Test::fuzz::RawBody{material.subspan(offset, take)},
+                                       seed >> 3))
         {
             return false;
         }
@@ -271,7 +271,7 @@ extern "C" std::size_t LLVMFuzzerCustomMutator(std::uint8_t* data,
 
     // Half go back untouched: inputs that do not frame cleanly cover resynchronisation, header
     // rejection and truncation.
-    if((seed & 1u) != 0u) { return mutated; }
+    if((seed & 1U) != 0U) { return mutated; }
 
 #ifdef __clang__
     #pragma clang diagnostic push
@@ -290,7 +290,7 @@ extern "C" std::size_t LLVMFuzzerCustomMutator(std::uint8_t* data,
     out.push_back(static_cast<std::byte>(buffer[1]));
 
     bool framed{};
-    Test::fuzz::with_case(selector, [&](auto testCase) {
+    Test::fuzz::withCase(selector, [&](auto testCase) {
         framed = reframe<decltype(testCase)>(std::as_bytes(buffer.subspan(2)), seed, out);
     });
 
@@ -313,7 +313,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const* data,
     #pragma clang diagnostic ignored "-Wunsafe-buffer-usage-in-container"
 #endif
     // A raw pointer and size; the two-parameter span construction is the only way to adopt it.
-    std::span<std::byte const> input{reinterpret_cast<std::byte const*>(data), size};
+    std::span<std::byte const> const input{reinterpret_cast<std::byte const*>(data), size};
 #ifdef __clang__
     #pragma clang diagnostic pop
 #endif
@@ -324,7 +324,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const* data,
     auto const packLimit = static_cast<std::size_t>(input[1]);
     auto const wire      = input.subspan(2);
 
-    Test::fuzz::with_case(selector, [wire, packLimit](auto testCase) {
+    Test::fuzz::withCase(selector, [wire, packLimit](auto testCase) {
         run<decltype(testCase)>(wire, packLimit);
     });
     return 0;

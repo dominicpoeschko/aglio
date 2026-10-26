@@ -23,10 +23,29 @@ namespace detail {
 
     template<typename T>
     struct HeaderDataField {
-        T header_data{};
+        T headerData{};
     };
 
     struct NoHeaderDataField {};
+
+    /// Instantiated by Packager::requireAlwaysFits: a failure names both sizes as template
+    /// arguments, FrameHolds<max_packed_size, MaxFrameSize>.
+    template<std::size_t MaxPackedSize, std::size_t MaxFrameSize>
+    struct FrameHolds {
+        static_assert(MaxPackedSize <= MaxFrameSize,
+                      "a value of this type at its largest packs into a frame longer than the "
+                      "Packager's MaxSize (template arguments: max_packed_size, MaxFrameSize)");
+        static constexpr bool value = true;
+    };
+
+    template<typename T>
+    struct HasNoWorstCase {
+        static_assert(false,
+                      "this type has no worst-case wire size (aglio::has_max_serialized_size is "
+                      "false): it holds a container without a static capacity, or a custom "
+                      "serializer without a max_serialized_size member");
+        static constexpr bool value = false;
+    };
 
     template<typename T>
     constexpr bool is_trivial_v
@@ -51,7 +70,7 @@ namespace detail {
 
     /// A buffer the serializer writes as one window from data(), setting its size afterwards.
     template<typename B>
-    concept sized_once = fixed_capacity_v<B> && requires(B& b) {
+    concept SizedOnce = fixed_capacity_v<B> && requires(B& b) {
         { b.data() } -> std::convertible_to<std::byte*>;
         { b.size() } -> std::convertible_to<std::size_t>;
         b.resize(std::size_t{});
@@ -63,13 +82,13 @@ namespace detail {
         std::byte*  first;
         std::size_t count;
 
-        constexpr std::byte* data() const noexcept { return first; }
+        [[nodiscard]] constexpr std::byte* data() const noexcept { return first; }
 
-        constexpr std::size_t size() const noexcept { return count; }
+        [[nodiscard]] constexpr std::size_t size() const noexcept { return count; }
     };
 
     /// resize_and_overwrite op that keeps every byte.
-    struct keep_all {
+    struct KeepAll {
         constexpr std::size_t operator()(auto*,
                                          std::size_t n) const noexcept {
             return n;
@@ -79,70 +98,52 @@ namespace detail {
     /// A fixed-capacity buffer with std::string's resize_and_overwrite(n, op), so growing it
     /// fills nothing. Without it the buffer is resized to max_size() and trimmed after.
     template<typename B>
-    concept overwritable = fixed_capacity_v<B>
-                        && requires(B& b) { b.resize_and_overwrite(std::size_t{}, keep_all{}); };
+    concept Overwritable
+      = fixed_capacity_v<B> && requires(B& b) { b.resize_and_overwrite(std::size_t{}, KeepAll{}); };
 
-    template<typename Serializer, typename Config_>
+    template<typename Serializer, typename UserConfig>
     struct Packager {
     private:
-        struct Config : Config_ {
+        struct Config : UserConfig {
             struct NoCrc {
                 using type = std::uint8_t;
             };
 
-            static constexpr bool UseCrc = [] {
-                if constexpr(requires { typename Config_::Crc; }) {
-                    return true;
-                } else {
-                    return false;
-                }
-            }();
+            static constexpr bool UseCrc       = requires { typename UserConfig::Crc; };
             static constexpr bool UseHeaderCrc = [] {
-                if constexpr(requires { Config_::UseHeaderCrc; }) {
-                    return Config_::UseHeaderCrc && UseCrc;
+                if constexpr(requires { UserConfig::UseHeaderCrc; }) {
+                    return UserConfig::UseHeaderCrc && UseCrc;
                 } else {
                     return UseCrc;
                 }
             }();
-            static constexpr bool UsePackageStart = [] {
-                if constexpr(requires { Config_::PackageStart; }) {
-                    return true;
-                } else {
-                    return false;
-                }
-            }();
-            using Crc                          = decltype([] {
+            static constexpr bool UsePackageStart = requires { UserConfig::PackageStart; };
+            using Crc                             = decltype([] {
                 if constexpr(UseCrc) {
-                    return typename Config_::Crc{};
+                    return typename UserConfig::Crc{};
                 } else {
                     return NoCrc{};
                 }
             }());
-            static constexpr auto PackageStart = [] {
-                if constexpr(requires { Config_::PackageStart; }) {
-                    return Config_::PackageStart;
+            static constexpr auto PackageStart    = [] {
+                if constexpr(requires { UserConfig::PackageStart; }) {
+                    return UserConfig::PackageStart;
                 } else {
                     return std::uint8_t{};
                 }
             }();
-            using Size_t                  = typename Config_::Size_t;
+            using Size_t                  = typename UserConfig::Size_t;
             static constexpr auto MaxSize = [] {
-                if constexpr(requires { Config_::MaxSize; }) {
-                    return Config_::MaxSize;
+                if constexpr(requires { UserConfig::MaxSize; }) {
+                    return UserConfig::MaxSize;
                 } else {
                     return std::numeric_limits<Size_t>::max();
                 }
             }();
-            static constexpr bool UseHeaderData = [] {
-                if constexpr(requires { typename Config_::HeaderData; }) {
-                    return true;
-                } else {
-                    return false;
-                }
-            }();
-            using HeaderData = decltype([] {
+            static constexpr bool UseHeaderData = requires { typename UserConfig::HeaderData; };
+            using HeaderData                    = decltype([] {
                 if constexpr(UseHeaderData) {
-                    return typename Config_::HeaderData{};
+                    return typename UserConfig::HeaderData{};
                 } else {
                     return std::uint8_t{};
                 }
@@ -161,19 +162,19 @@ namespace detail {
         static constexpr std::byte      FirstByte{PackageStart & 0xFF};
         static constexpr Size_t         MaxSize{Config::MaxSize};
 
-        static_assert(is_trivial_v<PackageStart_t> || Config::UsePackageStart == false,
+        static_assert(is_trivial_v<PackageStart_t> || !Config::UsePackageStart,
                       "PackageStart must be trivial");
-        static_assert(Config::UseCrc == false
-                        || aglio::has_fixed_serialized_size<Crc_t,
-                                                            Size_t>,
+        static_assert(!Config::UseCrc
+                        || aglio::HasFixedSerializedSize<Crc_t,
+                                                         Size_t>,
                       "Crc::type must have a fixed serialized size");
-        static_assert(Config::UseCrc == false || std::equality_comparable<Crc_t>,
+        static_assert(!Config::UseCrc || std::equality_comparable<Crc_t>,
                       "Crc::type must be equality comparable");
         static_assert(is_trivial_v<Size_t>,
                       "Size_t must be trivial");
         static_assert(!Config::UseHeaderData
-                        || aglio::has_fixed_serialized_size<HeaderData_t,
-                                                            Size_t>,
+                        || aglio::HasFixedSerializedSize<HeaderData_t,
+                                                         Size_t>,
                       "HeaderData must have a fixed serialized size");
         static_assert(std::numeric_limits<Size_t>::max() >= MaxSize,
                       "max size needs to fit into Size_t");
@@ -199,7 +200,7 @@ namespace detail {
         private:
             Buffer&           buffer;
             std::size_t const startSize;
-            std::size_t       finalizedSize{0};
+            std::size_t       finalizedEnd{0};
             bool              finalized{false};
 
         public:
@@ -214,14 +215,14 @@ namespace detail {
             BufferAdapter& operator=(BufferAdapter const&) = delete;
             BufferAdapter& operator=(BufferAdapter&&)      = delete;
 
-            std::size_t size() const { return buffer.size() - startSize; }
+            [[nodiscard]] std::size_t size() const { return buffer.size() - startSize; }
 
-            std::size_t finalized_size() const { return finalizedSize - startSize; }
+            [[nodiscard]] std::size_t finalizedSize() const { return finalizedEnd - startSize; }
 
             void resize(std::size_t newSize) { buffer.resize(newSize + startSize); }
 
             template<typename Op>
-                requires overwritable<Buffer>
+                requires Overwritable<Buffer>
             void resize_and_overwrite(std::size_t newSize,
                                       Op&&        op) {
                 buffer.resize_and_overwrite(newSize + startSize, [&](auto* first, std::size_t n) {
@@ -233,15 +234,15 @@ namespace detail {
             }
 
             /// Grows for bytes the caller will overwrite; unfilled where the buffer allows.
-            void resize_for_overwrite(std::size_t newSize) {
-                if constexpr(overwritable<Buffer>) {
-                    resize_and_overwrite(newSize, keep_all{});
+            void resizeForOverwrite(std::size_t newSize) {
+                if constexpr(Overwritable<Buffer>) {
+                    resize_and_overwrite(newSize, KeepAll{});
                 } else {
                     resize(newSize);
                 }
             }
 
-            std::size_t max_size() const {
+            [[nodiscard]] std::size_t max_size() const {
                 if constexpr(requires { buffer.max_size(); }) {
                     auto const bufferMaxSize = static_cast<std::size_t>(buffer.max_size());
                     auto const adjustedMax
@@ -255,8 +256,8 @@ namespace detail {
             auto& operator[](std::size_t pos) { return buffer[pos]; }
 
             void finalize() {
-                finalizedSize = buffer.size();
-                finalized     = true;
+                finalizedEnd = buffer.size();
+                finalized    = true;
             }
 
             auto data() {
@@ -264,7 +265,7 @@ namespace detail {
                                  static_cast<std::make_signed_t<std::size_t>>(startSize));
             }
 
-            auto as_span() { return std::span{std::ranges::subrange(begin(), end())}; }
+            auto asSpan() { return std::span{std::ranges::subrange(begin(), end())}; }
 
             auto begin() {
                 return std::next(buffer.begin(),
@@ -274,25 +275,21 @@ namespace detail {
             auto end() {
                 if(finalized) {
                     return std::next(buffer.begin(),
-                                     static_cast<std::make_signed_t<std::size_t>>(finalizedSize));
-                } else {
-                    return std::next(begin(), static_cast<std::make_signed_t<std::size_t>>(size()));
+                                     static_cast<std::make_signed_t<std::size_t>>(finalizedEnd));
                 }
+                return std::next(begin(), static_cast<std::make_signed_t<std::size_t>>(size()));
             }
 
             bool empty() {
-                if(finalized) {
-                    return finalizedSize - startSize == 0;
-                } else {
-                    return buffer.size() <= startSize;
-                }
+                if(finalized) { return finalizedEnd - startSize == 0; }
+                return buffer.size() <= startSize;
             }
         };
 
         template<typename T,
                  std::size_t N>
-        static bool header_write(std::span<std::byte> buf,
-                                 T const&             v) {
+        static bool headerWrite(std::span<std::byte> buf,
+                                T const&             v) {
             auto                            sub = buf.first<N>();
             aglio::DynamicSerializationView sebuf{sub};
             return aglio::serializer<T, Size_t>::serialize(v, sebuf);
@@ -300,8 +297,8 @@ namespace detail {
 
         template<typename T,
                  std::size_t N>
-        static bool header_read(T&                         v,
-                                std::span<std::byte const> buf) {
+        static bool headerRead(T&                         v,
+                               std::span<std::byte const> buf) {
             auto                              sub = buf.first<N>();
             aglio::DynamicDeserializationView debuf{sub};
             return aglio::serializer<T, Size_t>::deserialize(v, debuf);
@@ -326,7 +323,7 @@ namespace detail {
                                        HeaderData_t const& info) {
             BufferAdapter<Buffer> headerBuffer{buffer};
             if(headerBuffer.max_size() < HeaderSize) { return false; }
-            headerBuffer.resize_for_overwrite(HeaderSize);
+            headerBuffer.resizeForOverwrite(HeaderSize);
 
             BufferAdapter<decltype(headerBuffer)> bodyBuffer{headerBuffer};
             if(!Serializer::serialize(bodyBuffer, v)) { return false; }
@@ -338,20 +335,20 @@ namespace detail {
                   std::span(std::ranges::subrange(bodyBuffer.begin(), bodyBuffer.end()))));
 
                 if(crcBuffer.max_size() < CrcSize) { return false; }
-                crcBuffer.resize_for_overwrite(CrcSize);
-                if(!header_write<Crc_t, CrcSize>(crcBuffer.as_span(), bodyCrc)) { return false; }
+                crcBuffer.resizeForOverwrite(CrcSize);
+                if(!headerWrite<Crc_t, CrcSize>(crcBuffer.asSpan(), bodyCrc)) { return false; }
                 crcBuffer.finalize();
             }
 
             Size_t const bodySize
-              = static_cast<Config::Size_t>(bodyBuffer.finalized_size() + CrcSize);
+              = static_cast<Config::Size_t>(bodyBuffer.finalizedSize() + CrcSize);
 
             if constexpr(Config::UsePackageStart) {
-                copy_fixed<PackageStartSize>(headerBuffer.data(), std::addressof(PackageStart));
+                copyFixed<PackageStartSize>(headerBuffer.data(), std::addressof(PackageStart));
             }
 
-            copy_fixed<PackageSizeSize>(std::next(headerBuffer.data(), PackageStartSize),
-                                        std::addressof(bodySize));
+            copyFixed<PackageSizeSize>(std::next(headerBuffer.data(), PackageStartSize),
+                                       std::addressof(bodySize));
 
             if constexpr(Config::UseCrc && !Config::UseHeaderCrc) {
                 BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
@@ -359,15 +356,15 @@ namespace detail {
                   std::span(std::ranges::subrange(headerBuffer.begin(), bodyBuffer.end()))));
 
                 if(crcBuffer.max_size() < CrcSize) { return false; }
-                crcBuffer.resize_for_overwrite(CrcSize);
-                if(!header_write<Crc_t, CrcSize>(crcBuffer.as_span(), bodyCrc)) { return false; }
+                crcBuffer.resizeForOverwrite(CrcSize);
+                if(!headerWrite<Crc_t, CrcSize>(crcBuffer.asSpan(), bodyCrc)) { return false; }
                 crcBuffer.finalize();
             }
 
             if constexpr(Config::UseHeaderCrc) {
                 if constexpr(Config::UseHeaderData) {
-                    if(!header_write<HeaderData_t, HeaderDataSize>(
-                         headerBuffer.as_span().subspan(PackageStartSize + PackageSizeSize),
+                    if(!headerWrite<HeaderData_t, HeaderDataSize>(
+                         headerBuffer.asSpan().subspan(PackageStartSize + PackageSizeSize),
                          info))
                     {
                         return false;
@@ -380,10 +377,10 @@ namespace detail {
                     std::next(headerBuffer.begin(),
                               PackageStartSize + PackageSizeSize + HeaderDataSize)))));
 
-                if(!header_write<Crc_t, CrcSize>(headerBuffer.as_span().subspan(PackageStartSize
-                                                                                + PackageSizeSize
-                                                                                + HeaderDataSize),
-                                                 headerCrc))
+                if(!headerWrite<Crc_t, CrcSize>(headerBuffer.asSpan().subspan(PackageStartSize
+                                                                              + PackageSizeSize
+                                                                              + HeaderDataSize),
+                                                headerCrc))
                 {
                     return false;
                 }
@@ -398,13 +395,13 @@ namespace detail {
         template<typename Span>
         struct FindResult : HeaderDataBase {
             Span body{};
-            bool body_crc_valid{true};
+            bool bodyCrcValid{true};
         };
 
         template<typename Span>
-        static constexpr std::optional<FindResult<Span>> find_valid_package(Span& span) {
+        static constexpr std::optional<FindResult<Span>> findValidPackage(Span& span) {
             while(true) {
-                auto skip = [&]() {
+                auto const skip = [&]() {
                     span = span.subspan(1);
 
                     if constexpr(Config::UsePackageStart) {
@@ -419,42 +416,42 @@ namespace detail {
                 if(HeaderSize + CrcSize > span.size()) { return std::nullopt; }
 
                 if constexpr(Config::UsePackageStart) {
-                    PackageStart_t read_packageStart{};
+                    PackageStart_t readPackageStart{};
 
-                    copy_fixed<PackageStartSize>(std::addressof(read_packageStart), span.data());
+                    copyFixed<PackageStartSize>(std::addressof(readPackageStart), span.data());
 
-                    if(read_packageStart != PackageStart) {
+                    if(readPackageStart != PackageStart) {
                         skip();
                         continue;
                     }
                 }
 
-                HeaderData_t read_data{};
+                HeaderData_t readData{};
 
                 if constexpr(Config::UseHeaderCrc) {
-                    Crc_t read_headerCrc{};
-                    if(!header_read<Crc_t, CrcSize>(
-                         read_headerCrc,
+                    Crc_t readHeaderCrc{};
+                    if(!headerRead<Crc_t, CrcSize>(
+                         readHeaderCrc,
                          span.subspan(PackageStartSize + PackageSizeSize + HeaderDataSize)))
                     {
                         skip();
                         continue;
                     }
 
-                    auto const calced_headerCrc
+                    auto const calcedHeaderCrc
                       = Config::Crc::calc(std::as_bytes(std::span(std::ranges::subrange(
                         span.begin(),
                         std::next(span.begin(),
                                   PackageStartSize + PackageSizeSize + HeaderDataSize)))));
 
-                    if(calced_headerCrc != read_headerCrc) {
+                    if(calcedHeaderCrc != readHeaderCrc) {
                         skip();
                         continue;
                     }
 
                     if constexpr(Config::UseHeaderData) {
-                        if(!header_read<HeaderData_t, HeaderDataSize>(
-                             read_data,
+                        if(!headerRead<HeaderData_t, HeaderDataSize>(
+                             readData,
                              span.subspan(PackageStartSize + PackageSizeSize)))
                         {
                             skip();
@@ -463,41 +460,41 @@ namespace detail {
                     }
                 }
 
-                Size_t read_bodySize{};
-                copy_fixed<PackageSizeSize>(std::addressof(read_bodySize),
-                                            std::next(span.data(), PackageStartSize));
+                Size_t readBodySize{};
+                copyFixed<PackageSizeSize>(std::addressof(readBodySize),
+                                           std::next(span.data(), PackageStartSize));
 
-                if(read_bodySize > MaxSize || read_bodySize < CrcSize) {
+                if(readBodySize > MaxSize || readBodySize < CrcSize) {
                     skip();
                     continue;
                 }
 
-                if(HeaderSize + read_bodySize > span.size()) { return std::nullopt; }
+                if(HeaderSize + readBodySize > span.size()) { return std::nullopt; }
 
                 if constexpr(Config::UseCrc) {
-                    Crc_t read_bodyCrc{};
-                    if(!header_read<Crc_t, CrcSize>(
-                         read_bodyCrc,
-                         span.subspan((HeaderSize + read_bodySize) - CrcSize)))
+                    Crc_t readBodyCrc{};
+                    if(!headerRead<Crc_t, CrcSize>(
+                         readBodyCrc,
+                         span.subspan((HeaderSize + readBodySize) - CrcSize)))
                     {
                         skip();
                         continue;
                     }
 
-                    auto const calced_bodyCrc
+                    auto const calcedBodyCrc
                       = Config::Crc::calc(std::as_bytes(std::span(std::ranges::subrange(
                         std::next(span.begin(), Config::UseHeaderCrc ? HeaderSize : 0),
                         std::next(span.begin(),
                                   static_cast<std::make_signed_t<std::size_t>>(
-                                    (HeaderSize + read_bodySize) - CrcSize))))));
-                    if(calced_bodyCrc != read_bodyCrc) {
+                                    (HeaderSize + readBodySize) - CrcSize))))));
+                    if(calcedBodyCrc != readBodyCrc) {
                         if constexpr(Config::UseHeaderData) {
-                            auto body = span.subspan(HeaderSize, read_bodySize - CrcSize);
-                            span      = span.subspan(HeaderSize + read_bodySize);
+                            auto const body = span.subspan(HeaderSize, readBodySize - CrcSize);
+                            span            = span.subspan(HeaderSize + readBodySize);
                             FindResult<Span> fr;
-                            fr.body           = body;
-                            fr.body_crc_valid = false;
-                            if constexpr(Config::UseHeaderData) { fr.header_data = read_data; }
+                            fr.body         = body;
+                            fr.bodyCrcValid = false;
+                            if constexpr(Config::UseHeaderData) { fr.headerData = readData; }
                             return fr;
                         } else {
                             skip();
@@ -506,12 +503,12 @@ namespace detail {
                     }
                 }
 
-                auto body = span.subspan(HeaderSize, read_bodySize - CrcSize);
-                span      = span.subspan(HeaderSize + read_bodySize);
+                auto const body = span.subspan(HeaderSize, readBodySize - CrcSize);
+                span            = span.subspan(HeaderSize + readBodySize);
                 FindResult<Span> fr;
-                fr.body           = body;
-                fr.body_crc_valid = true;
-                if constexpr(Config::UseHeaderData) { fr.header_data = read_data; }
+                fr.body         = body;
+                fr.bodyCrcValid = true;
+                if constexpr(Config::UseHeaderData) { fr.headerData = readData; }
                 return fr;
             }
         }
@@ -527,6 +524,40 @@ namespace detail {
         };
 
         using UnpackReturn_t = std::expected<UnpackSuccess, UnpackError>;
+
+        /// The bytes a frame adds around its body: start, size, header data, header CRC and the
+        /// body's CRC, as configured.
+        static constexpr std::size_t FrameOverhead{HeaderSize + CrcSize};
+
+        /// The longest frame pack() writes: the configured MaxSize caps the whole frame.
+        static constexpr std::size_t MaxFrameSize{MaxSize};
+
+        /// The longest frame pack() writes for any T: its body at max_serialized_size.
+        template<typename T>
+            requires aglio::HasMaxSerializedSize<T, Size_t>
+        static constexpr std::size_t max_packed_size
+          = detail::saturatingAdd(FrameOverhead, aglio::max_serialized_size_v<T, Size_t>);
+
+        /// Whether every value of T packs into one frame; false for a T without a worst case.
+        template<typename T>
+        static constexpr bool always_fits = [] {
+            if constexpr(aglio::HasMaxSerializedSize<T, Size_t>) {
+                return max_packed_size<T> <= MaxFrameSize;
+            } else {
+                return false;
+            }
+        }();
+
+        /// always_fits<T> as a check that says why not: `static_assert(P::template
+        /// requireAlwaysFits<T>());` fails naming T and both sizes.
+        template<typename T>
+        static consteval bool requireAlwaysFits() {
+            if constexpr(aglio::HasMaxSerializedSize<T, Size_t>) {
+                return detail::FrameHolds<max_packed_size<T>, MaxFrameSize>::value;
+            } else {
+                return detail::HasNoWorstCase<T>::value;
+            }
+        }
 
         template<typename T,
                  typename Buffer>
@@ -552,7 +583,7 @@ namespace detail {
             std::span span{buffer};
 
             while(true) {
-                auto result = find_valid_package(span);
+                auto result = findValidPackage(span);
                 if(!result) { return std::unexpected(UnpackError{}); }
 
                 auto const consumed = buffer.size() - span.size();
@@ -560,24 +591,24 @@ namespace detail {
                 // find_valid_package only reports a bad body CRC for HeaderData configs; the others
                 // resynchronize inside it.
                 if constexpr(Config::UseHeaderData) {
-                    if(!result->body_crc_valid) {
+                    if(!result->bodyCrcValid) {
                         UnpackError err;
-                        err.kind        = UnpackErrorKind::ParseFailure;
-                        err.consumed    = consumed;
-                        err.header_data = result->header_data;
+                        err.kind       = UnpackErrorKind::ParseFailure;
+                        err.consumed   = consumed;
+                        err.headerData = result->headerData;
                         return std::unexpected(err);
                     }
                 }
 
-                auto body = result->body;
-                auto ec   = Serializer::deserialize(body, v);
+                auto       body = result->body;
+                auto const ec   = Serializer::deserialize(body, v);
 
                 if(ec || ec.location != result->body.size()) {
                     if constexpr(Config::UseHeaderData) {
                         UnpackError err;
-                        err.kind        = UnpackErrorKind::ParseFailure;
-                        err.consumed    = consumed;
-                        err.header_data = result->header_data;
+                        err.kind       = UnpackErrorKind::ParseFailure;
+                        err.consumed   = consumed;
+                        err.headerData = result->headerData;
                         return std::unexpected(err);
                     } else {
                         continue;
@@ -586,7 +617,7 @@ namespace detail {
 
                 UnpackSuccess success;
                 success.consumed = consumed;
-                if constexpr(Config::UseHeaderData) { success.header_data = result->header_data; }
+                if constexpr(Config::UseHeaderData) { success.headerData = result->headerData; }
                 return success;
             }
         }
@@ -607,28 +638,28 @@ namespace detail {
             requires(Config::UseHeaderData)
         static constexpr ValidateReturn_t validate(Buffer& buffer) {
             std::span span{buffer};
-            auto      result = find_valid_package(span);
+            auto      result = findValidPackage(span);
             if(!result) { return std::unexpected(ValidateError{}); }
 
             auto const consumed = buffer.size() - span.size();
 
-            if(!result->body_crc_valid) {
+            if(!result->bodyCrcValid) {
                 ValidateError err;
                 err.kind     = UnpackErrorKind::ParseFailure;
                 err.consumed = consumed;
-                if constexpr(Config::UseHeaderData) { err.header_data = result->header_data; }
+                if constexpr(Config::UseHeaderData) { err.headerData = result->headerData; }
                 return std::unexpected(err);
             }
 
             ValidateSuccess success;
             success.consumed = consumed;
             success.body     = result->body;
-            if constexpr(Config::UseHeaderData) { success.header_data = result->header_data; }
+            if constexpr(Config::UseHeaderData) { success.headerData = result->headerData; }
             return success;
         }
     };
 
-    template<typename Size_t>
+    template<typename SizeT>
     struct Serializer {
         template<typename T,
                  typename Buffer>
@@ -636,7 +667,7 @@ namespace detail {
                               T const& v) {
             // A fixed-capacity buffer is written as one window over its free room and resized
             // once, instead of growing per field. On failure its size is restored.
-            if constexpr(sized_once<Buffer>) {
+            if constexpr(SizedOnce<Buffer>) {
                 auto const start = static_cast<std::size_t>(buffer.size());
                 auto const room  = static_cast<std::size_t>(buffer.max_size());
                 if(room < start) { return false; }
@@ -646,10 +677,10 @@ namespace detail {
                       std::next(first, static_cast<std::make_signed_t<std::size_t>>(start)),
                       room - start};
                     aglio::DynamicSerializationView sebuff{window};
-                    ok = aglio::Serializer<Size_t>::serialize(sebuff, v);
+                    ok = aglio::Serializer<SizeT>::serialize(sebuff, v);
                     return start + (ok ? sebuff.size() : std::size_t{});
                 };
-                if constexpr(overwritable<Buffer>) {
+                if constexpr(Overwritable<Buffer>) {
                     buffer.resize_and_overwrite(room, write);
                 } else {
                     buffer.resize(room);
@@ -658,11 +689,11 @@ namespace detail {
                 return ok;
             } else {
                 aglio::DynamicSerializationView sebuff{buffer};
-                return aglio::Serializer<Size_t>::serialize(sebuff, v);
+                return aglio::Serializer<SizeT>::serialize(sebuff, v);
             }
         }
 
-        struct parse_error final {
+        struct ParseError final {
             bool        ec{};
             std::size_t location{};
 
@@ -671,22 +702,22 @@ namespace detail {
 
         template<typename T,
                  typename Buffer>
-        static parse_error deserialize(Buffer& buffer,
-                                       T&      v) {
+        static ParseError deserialize(Buffer& buffer,
+                                      T&      v) {
             aglio::DynamicDeserializationView debuff{buffer};
 
-            if(!aglio::Serializer<Size_t>::deserialize(debuff, v)) {
-                return parse_error{.ec = true, .location = 0};
+            if(!aglio::Serializer<SizeT>::deserialize(debuff, v)) {
+                return ParseError{.ec = true, .location = 0};
             }
-            return parse_error{.ec = false, .location = debuff.size() - debuff.available()};
+            return ParseError{.ec = false, .location = debuff.size() - debuff.available()};
         }
     };
 
 }   // namespace detail
 
-template<typename Crc_>
+template<typename CrcType>
 struct CrcConfig {
-    using Crc                                   = Crc_;
+    using Crc                                   = CrcType;
     using Size_t                                = std::uint16_t;
     static constexpr std::uint16_t PackageStart = 0x55AA;
     static constexpr Size_t        MaxSize      = 2048;

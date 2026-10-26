@@ -5,6 +5,11 @@
 
 #include <aglio/packager.hpp>
 #include <aglio/serialization_buffers.hpp>
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <tuple>
+#include <vector>
 
 namespace Test::packager {
 
@@ -39,15 +44,15 @@ template<typename Type,
 void test() {
     std::vector<std::byte> buffer{};
 
-    Type t_in = Types::createDefault<Type>();
+    Type tIn = Types::createDefault<Type>();
 
-    REQUIRE(Packager::pack(buffer, t_in));
-    Type t_out{};
-    auto result = Packager::unpack(buffer, t_out);
+    REQUIRE(Packager::pack(buffer, tIn));
+    Type tOut{};
+    auto result = Packager::unpack(buffer, tOut);
 
     REQUIRE(result.has_value());
     CHECK(buffer.size() == result->consumed);
-    CHECK(t_in == t_out);
+    CHECK(tIn == tOut);
 }
 
 /// A buffer whose max_size() is its capacity, known at compile time.
@@ -60,7 +65,7 @@ struct FixedBuffer {
 
     static constexpr std::size_t max_size() { return N; }
 
-    std::size_t size() const { return used; }
+    [[nodiscard]] std::size_t size() const { return used; }
 
     void resize(std::size_t n) {
         REQUIRE(n <= N);
@@ -70,19 +75,21 @@ struct FixedBuffer {
 
     std::span<std::byte> bytes() { return std::span{storage}.first(used); }
 
-    std::span<std::byte const> bytes() const { return std::span{storage}.first(used); }
+    [[nodiscard]] std::span<std::byte const> bytes() const {
+        return std::span{storage}.first(used);
+    }
 
     std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
-    std::byte const* data() const { return storage.data(); }
+    [[nodiscard]] std::byte const* data() const { return storage.data(); }
 
     auto begin() { return bytes().begin(); }
 
     auto end() { return bytes().end(); }
 
-    auto begin() const { return bytes().begin(); }
+    [[nodiscard]] auto begin() const { return bytes().begin(); }
 
-    auto end() const { return bytes().end(); }
+    [[nodiscard]] auto end() const { return bytes().end(); }
 
     std::byte& operator[](std::size_t i) AGLIO_LIFETIMEBOUND { return storage[i]; }
 };
@@ -115,7 +122,7 @@ struct BareFixedBuffer {
 
     static constexpr std::size_t max_size() { return N; }
 
-    std::size_t size() const { return used; }
+    [[nodiscard]] std::size_t size() const { return used; }
 
     void resize(std::size_t n) {
         REQUIRE(n <= N);
@@ -127,12 +134,12 @@ struct BareFixedBuffer {
 
 static_assert(aglio::detail::fixed_capacity_v<FixedBuffer<8>>);
 static_assert(!aglio::detail::fixed_capacity_v<std::vector<std::byte>>);
-static_assert(aglio::detail::sized_once<FixedBuffer<8>>);
-static_assert(aglio::detail::sized_once<RawFixedBuffer<8>>);
-static_assert(aglio::detail::sized_once<BareFixedBuffer<8>>);
-static_assert(!aglio::detail::overwritable<FixedBuffer<8>>);
-static_assert(aglio::detail::overwritable<RawFixedBuffer<8>>);
-static_assert(!aglio::detail::sized_once<std::vector<std::byte>>);
+static_assert(aglio::detail::SizedOnce<FixedBuffer<8>>);
+static_assert(aglio::detail::SizedOnce<RawFixedBuffer<8>>);
+static_assert(aglio::detail::SizedOnce<BareFixedBuffer<8>>);
+static_assert(!aglio::detail::Overwritable<FixedBuffer<8>>);
+static_assert(aglio::detail::Overwritable<RawFixedBuffer<8>>);
+static_assert(!aglio::detail::SizedOnce<std::vector<std::byte>>);
 
 /// Packing into a fixed buffer (serialized into one window) gives the bytes packing into a
 /// std::vector (grown per field) gives - behind bytes already in the buffer too.
@@ -140,30 +147,30 @@ template<typename Type,
          typename Packager,
          typename Fixed>
 void testFixed() {
-    Type const t_in = Types::createDefault<Type>();
+    Type const tIn = Types::createDefault<Type>();
 
     std::vector<std::byte> want{};
-    REQUIRE(Packager::pack(want, t_in));
+    REQUIRE(Packager::pack(want, tIn));
 
     Fixed fixed{};
-    REQUIRE(Packager::pack(fixed, t_in));
+    REQUIRE(Packager::pack(fixed, tIn));
     CHECK(std::ranges::equal(fixed, want));
 
     Fixed behind{};
     behind.used = 3;
     behind[0]   = std::byte{0xA1};
     behind[2]   = std::byte{0xC3};
-    REQUIRE(Packager::pack(behind, t_in));
+    REQUIRE(Packager::pack(behind, tIn));
     REQUIRE(behind.size() == 3 + want.size());
     CHECK(behind[0] == std::byte{0xA1});
     CHECK(behind[2] == std::byte{0xC3});
     CHECK(std::ranges::equal(behind.bytes().subspan(3), want));
 
-    Type                   t_out{};
+    Type                   tOut{};
     std::vector<std::byte> packed(fixed.bytes().begin(), fixed.bytes().end());
-    auto                   result = Packager::unpack(packed, t_out);
+    auto const             result = Packager::unpack(packed, tOut);
     REQUIRE(result.has_value());
-    CHECK(t_in == t_out);
+    CHECK(tIn == tOut);
 }
 
 struct PacketHeader {
@@ -179,7 +186,7 @@ struct SensorData {
 };
 
 struct CommandMsg {
-    std::uint32_t command_code{};
+    std::uint32_t commandCode{};
     std::string   payload{};
     bool          operator==(CommandMsg const&) const = default;
 };
@@ -307,21 +314,21 @@ struct Plain {
 }   // namespace Test::packager
 
 // Writes one byte and claims to take two.
-template<typename Size_t>
-struct aglio::serializer<Test::packager::Short, Size_t> {
+template<typename SizeT>
+struct aglio::serializer<Test::packager::Short, SizeT> {
     static bool serialize(Test::packager::Short const& v,
                           auto&                        buffer) {
-        return aglio::serializer<std::uint8_t, Size_t>::serialize(v.value, buffer);
+        return aglio::serializer<std::uint8_t, SizeT>::serialize(v.value, buffer);
     }
 
     static bool deserialize(Test::packager::Short& v,
                             auto&                  buffer) {
-        return aglio::serializer<std::uint8_t, Size_t>::deserialize(v.value, buffer);
+        return aglio::serializer<std::uint8_t, SizeT>::deserialize(v.value, buffer);
     }
 };
 
-template<typename Size_t>
-struct aglio::serialized_size<Test::packager::Short, Size_t>
+template<typename SizeT>
+struct aglio::serialized_size<Test::packager::Short, SizeT>
   : std::integral_constant<std::size_t, 2> {};
 
 TEST_CASE("A value of fixed serialized size takes one claim of the buffer",
@@ -358,8 +365,8 @@ TEST_CASE("A value of fixed serialized size takes one claim of the buffer",
     CHECK(exact[0] == std::byte{0xEE});
     CHECK(std::ranges::equal(exact.bytes().subspan(1), want));
 
-    Plain out{};
-    auto  ec = Serializer::deserialize(want, out);
+    Plain      out{};
+    auto const ec = Serializer::deserialize(want, out);
     CHECK(!ec);
     CHECK(ec.location == Size);
     CHECK(out == value);
@@ -418,12 +425,12 @@ TEST_CASE("Serializer rejects range that exceeds fixed-capacity container max_si
           "[serializer]") {
     using Packager = aglio::Packager<Test::packager::Configs::Minimal>;
 
-    std::vector<int>       src    = {1, 2, 3, 4, 5};
+    std::vector<int> const src    = {1, 2, 3, 4, 5};
     std::vector<std::byte> buffer = {};
     REQUIRE(Packager::pack(buffer, src));
 
     std::array<int, 3> dst{};
-    auto               result = Packager::unpack(buffer, dst);
+    auto const         result = Packager::unpack(buffer, dst);
     CHECK(!result.has_value());
 }
 
@@ -431,21 +438,21 @@ TEST_CASE("Packager pair<primitive, struct ref>",
           "[packager]") {
     using Packager = aglio::Packager<Test::packager::Configs::Minimal>;
 
-    Types::Primitive                  prim_in = Types::createDefault<Types::Primitive>();
-    std::pair<int, Types::Primitive&> pair_in{42, prim_in};
+    Types::Primitive                  primIn = Types::createDefault<Types::Primitive>();
+    std::pair<int, Types::Primitive&> pairIn{42, std::ref(primIn)};
 
     std::vector<std::byte> buffer{};
-    REQUIRE(Packager::pack(buffer, pair_in));
+    REQUIRE(Packager::pack(buffer, pairIn));
 
-    Types::Primitive                  prim_out{};
-    std::pair<int, Types::Primitive&> pair_out{0, prim_out};
+    Types::Primitive                  primOut{};
+    std::pair<int, Types::Primitive&> pairOut{0, std::ref(primOut)};
 
-    auto result = Packager::unpack(buffer, pair_out);
+    auto result = Packager::unpack(buffer, pairOut);
 
     REQUIRE(result.has_value());
     CHECK(buffer.size() == result->consumed);
-    CHECK(pair_in.first == pair_out.first);
-    CHECK(pair_in.second == pair_out.second);
+    CHECK(pairIn.first == pairOut.first);
+    CHECK(pairIn.second == pairOut.second);
 }
 
 TEST_CASE("Packager pair<primitive, variant<structs> ref>",
@@ -454,57 +461,57 @@ TEST_CASE("Packager pair<primitive, variant<structs> ref>",
     using Variant  = std::variant<Types::Primitive, Types::Container, Types::Enum>;
 
     SECTION("Primitive variant") {
-        Variant                  var_in = Types::createDefault<Types::Primitive>();
-        std::pair<int, Variant&> pair_in{1, var_in};
+        Variant                  varIn = Types::createDefault<Types::Primitive>();
+        std::pair<int, Variant&> pairIn{1, std::ref(varIn)};
 
         std::vector<std::byte> buffer{};
-        REQUIRE(Packager::pack(buffer, pair_in));
+        REQUIRE(Packager::pack(buffer, pairIn));
 
-        Variant                  var_out{};
-        std::pair<int, Variant&> pair_out{0, var_out};
+        Variant                  varOut{};
+        std::pair<int, Variant&> pairOut{0, std::ref(varOut)};
 
-        auto result = Packager::unpack(buffer, pair_out);
+        auto result = Packager::unpack(buffer, pairOut);
 
         REQUIRE(result.has_value());
         CHECK(buffer.size() == result->consumed);
-        CHECK(pair_in.first == pair_out.first);
-        CHECK(pair_in.second == pair_out.second);
+        CHECK(pairIn.first == pairOut.first);
+        CHECK(pairIn.second == pairOut.second);
     }
 
     SECTION("Container variant") {
-        Variant                  var_in = Types::createDefault<Types::Container>();
-        std::pair<int, Variant&> pair_in{2, var_in};
+        Variant                  varIn = Types::createDefault<Types::Container>();
+        std::pair<int, Variant&> pairIn{2, std::ref(varIn)};
 
         std::vector<std::byte> buffer{};
-        REQUIRE(Packager::pack(buffer, pair_in));
+        REQUIRE(Packager::pack(buffer, pairIn));
 
-        Variant                  var_out{};
-        std::pair<int, Variant&> pair_out{0, var_out};
+        Variant                  varOut{};
+        std::pair<int, Variant&> pairOut{0, std::ref(varOut)};
 
-        auto result = Packager::unpack(buffer, pair_out);
+        auto result = Packager::unpack(buffer, pairOut);
 
         REQUIRE(result.has_value());
         CHECK(buffer.size() == result->consumed);
-        CHECK(pair_in.first == pair_out.first);
-        CHECK(pair_in.second == pair_out.second);
+        CHECK(pairIn.first == pairOut.first);
+        CHECK(pairIn.second == pairOut.second);
     }
 
     SECTION("Enum variant") {
-        Variant                  var_in = Types::createDefault<Types::Enum>();
-        std::pair<int, Variant&> pair_in{3, var_in};
+        Variant                  varIn = Types::createDefault<Types::Enum>();
+        std::pair<int, Variant&> pairIn{3, std::ref(varIn)};
 
         std::vector<std::byte> buffer{};
-        REQUIRE(Packager::pack(buffer, pair_in));
+        REQUIRE(Packager::pack(buffer, pairIn));
 
-        Variant                  var_out{};
-        std::pair<int, Variant&> pair_out{0, var_out};
+        Variant                  varOut{};
+        std::pair<int, Variant&> pairOut{0, std::ref(varOut)};
 
-        auto result = Packager::unpack(buffer, pair_out);
+        auto result = Packager::unpack(buffer, pairOut);
 
         REQUIRE(result.has_value());
         CHECK(buffer.size() == result->consumed);
-        CHECK(pair_in.first == pair_out.first);
-        CHECK(pair_in.second == pair_out.second);
+        CHECK(pairIn.first == pairOut.first);
+        CHECK(pairIn.second == pairOut.second);
     }
 }
 
@@ -513,18 +520,18 @@ TEST_CASE("HeaderData: round-trip preserves injected value",
     using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
 
     std::vector<std::byte> buffer{};
-    int const              value_in = 1234;
-    std::uint8_t const     info_in  = 42;
+    int const              valueIn = 1234;
+    std::uint8_t const     infoIn  = 42;
 
-    REQUIRE(Packager::pack(buffer, value_in, info_in));
+    REQUIRE(Packager::pack(buffer, valueIn, infoIn));
 
-    int  value_out = 0;
-    auto result    = Packager::unpack(buffer, value_out);
+    int  valueOut = 0;
+    auto result   = Packager::unpack(buffer, valueOut);
 
     REQUIRE(result.has_value());
-    CHECK(result->header_data == info_in);
+    CHECK(result->headerData == infoIn);
     CHECK(result->consumed == buffer.size());
-    CHECK(value_out == value_in);
+    CHECK(valueOut == valueIn);
 }
 
 TEST_CASE("HeaderData: body corruption returns partial result with header_data",
@@ -532,19 +539,19 @@ TEST_CASE("HeaderData: body corruption returns partial result with header_data",
     using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
 
     std::vector<std::byte> buffer{};
-    int const              value_in = 5678;
-    std::uint8_t const     info_in  = 7;
+    int const              valueIn = 5678;
+    std::uint8_t const     infoIn  = 7;
 
-    REQUIRE(Packager::pack(buffer, value_in, info_in));
+    REQUIRE(Packager::pack(buffer, valueIn, infoIn));
 
     buffer[11] ^= std::byte{0xFF};
 
-    int  value_out = 0;
-    auto result    = Packager::unpack(buffer, value_out);
+    int  valueOut = 0;
+    auto result   = Packager::unpack(buffer, valueOut);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().kind == aglio::UnpackErrorKind::ParseFailure);
-    CHECK(result.error().header_data == info_in);
+    CHECK(result.error().headerData == infoIn);
     CHECK(result.error().consumed == buffer.size());
 }
 
@@ -553,18 +560,18 @@ TEST_CASE("HeaderData: existing configs still return optional<size_t>",
     using Packager = aglio::Packager<Test::packager::Configs::Full>;
 
     std::vector<std::byte> buffer{};
-    int const              value_in = 99;
+    int const              valueIn = 99;
 
-    REQUIRE(Packager::pack(buffer, value_in));
+    REQUIRE(Packager::pack(buffer, valueIn));
 
-    int  value_out = 0;
-    auto result    = Packager::unpack(buffer, value_out);
+    int  valueOut = 0;
+    auto result   = Packager::unpack(buffer, valueOut);
 
     static_assert(std::is_same_v<decltype(result),
                                  std::expected<Packager::UnpackSuccess, Packager::UnpackError>>);
     REQUIRE(result.has_value());
     CHECK(result->consumed == buffer.size());
-    CHECK(value_out == value_in);
+    CHECK(valueOut == valueIn);
 }
 
 TEST_CASE("WithDescribedHeaderData: round-trip preserves MsgId header_data",
@@ -572,19 +579,19 @@ TEST_CASE("WithDescribedHeaderData: round-trip preserves MsgId header_data",
     using Packager = aglio::Packager<Test::packager::Configs::WithDescribedHeaderData>;
 
     std::vector<std::byte>      buffer{};
-    int const                   value_in = 4321;
-    Test::packager::MsgId const info_in{.msg_type = 7, .channel = 3};
+    int const                   valueIn = 4321;
+    Test::packager::MsgId const infoIn{.msgType = 7, .channel = 3};
 
-    REQUIRE(Packager::pack(buffer, value_in, info_in));
+    REQUIRE(Packager::pack(buffer, valueIn, infoIn));
 
-    int  value_out = 0;
-    auto result    = Packager::unpack(buffer, value_out);
+    int  valueOut = 0;
+    auto result   = Packager::unpack(buffer, valueOut);
 
     REQUIRE(result.has_value());
-    CHECK(result->header_data.msg_type == info_in.msg_type);
-    CHECK(result->header_data.channel == info_in.channel);
+    CHECK(result->headerData.msgType == infoIn.msgType);
+    CHECK(result->headerData.channel == infoIn.channel);
     CHECK(result->consumed == buffer.size());
-    CHECK(value_out == value_in);
+    CHECK(valueOut == valueIn);
 }
 
 TEST_CASE("WithDescribedHeaderData: body corruption returns partial result with MsgId header_data",
@@ -592,20 +599,20 @@ TEST_CASE("WithDescribedHeaderData: body corruption returns partial result with 
     using Packager = aglio::Packager<Test::packager::Configs::WithDescribedHeaderData>;
 
     std::vector<std::byte>      buffer{};
-    int const                   value_in = 8765;
-    Test::packager::MsgId const info_in{.msg_type = 11, .channel = 5};
+    int const                   valueIn = 8765;
+    Test::packager::MsgId const infoIn{.msgType = 11, .channel = 5};
 
-    REQUIRE(Packager::pack(buffer, value_in, info_in));
+    REQUIRE(Packager::pack(buffer, valueIn, infoIn));
 
     buffer[12] ^= std::byte{0xFF};
 
-    int  value_out = 0;
-    auto result    = Packager::unpack(buffer, value_out);
+    int  valueOut = 0;
+    auto result   = Packager::unpack(buffer, valueOut);
 
     REQUIRE(!result.has_value());
     CHECK(result.error().kind == aglio::UnpackErrorKind::ParseFailure);
-    CHECK(result.error().header_data.msg_type == info_in.msg_type);
-    CHECK(result.error().header_data.channel == info_in.channel);
+    CHECK(result.error().headerData.msgType == infoIn.msgType);
+    CHECK(result.error().headerData.channel == infoIn.channel);
     CHECK(result.error().consumed == buffer.size());
 }
 
@@ -614,16 +621,16 @@ TEST_CASE("WithDescribedCrc: round-trip succeeds with MsgId as Crc::type",
     using Packager = aglio::Packager<Test::packager::Configs::WithDescribedCrc>;
 
     std::vector<std::byte> buffer{};
-    int const              value_in = 99;
+    int const              valueIn = 99;
 
-    REQUIRE(Packager::pack(buffer, value_in));
+    REQUIRE(Packager::pack(buffer, valueIn));
 
-    int  value_out = 0;
-    auto result    = Packager::unpack(buffer, value_out);
+    int  valueOut = 0;
+    auto result   = Packager::unpack(buffer, valueOut);
 
     REQUIRE(result.has_value());
     CHECK(result->consumed == buffer.size());
-    CHECK(value_out == value_in);
+    CHECK(valueOut == valueIn);
 }
 
 TEST_CASE("pack fails gracefully when output buffer max_size is exceeded",
@@ -634,9 +641,9 @@ TEST_CASE("pack fails gracefully when output buffer max_size is exceeded",
 
         std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 
-        std::size_t size() const { return sz; }
+        [[nodiscard]] std::size_t size() const { return sz; }
 
-        std::size_t max_size() const { return storage.size(); }
+        [[nodiscard]] std::size_t max_size() const { return storage.size(); }
 
         void resize(std::size_t n) { sz = n; }
     };
@@ -663,9 +670,9 @@ TEST_CASE("Packager: multiple messages in one buffer",
     REQUIRE(result.has_value());
     CHECK(first == 111);
 
-    auto remaining = std::span{buffer}.subspan(result->consumed);
-    int  second    = 0;
-    auto result2   = Packager::unpack(remaining, second);
+    auto       remaining = std::span{buffer}.subspan(result->consumed);
+    int        second    = 0;
+    auto const result2   = Packager::unpack(remaining, second);
     REQUIRE(result2.has_value());
     CHECK(second == 222);
 }
@@ -679,8 +686,8 @@ TEST_CASE("Packager: truncated message returns nullopt",
 
     buffer.resize(buffer.size() - 2);
 
-    int  out    = 0;
-    auto result = Packager::unpack(buffer, out);
+    int        out    = 0;
+    auto const result = Packager::unpack(buffer, out);
     CHECK(!result.has_value());
 }
 
@@ -691,8 +698,8 @@ TEST_CASE("Packager: bodySize smaller than CrcSize does not underflow",
 
         std::vector<std::byte> buffer(8, std::byte{0});
 
-        int  out    = 0;
-        auto result = Packager::unpack(buffer, out);
+        int        out    = 0;
+        auto const result = Packager::unpack(buffer, out);
         CHECK(!result.has_value());
     }
 
@@ -700,23 +707,23 @@ TEST_CASE("Packager: bodySize smaller than CrcSize does not underflow",
         using Packager = aglio::Packager<Test::packager::Configs::FullNoHeaderCrc>;
 
         std::vector<std::byte> buffer(10, std::byte{0});
-        std::uint16_t const    pkg_start = 0xABCD;
-        std::memcpy(buffer.data(), &pkg_start, sizeof(pkg_start));
+        std::uint16_t const    pkgStart = 0xABCD;
+        std::memcpy(buffer.data(), &pkgStart, sizeof(pkgStart));
 
-        int  out    = 0;
-        auto result = Packager::unpack(buffer, out);
+        int        out    = 0;
+        auto const result = Packager::unpack(buffer, out);
         CHECK(!result.has_value());
     }
 
     SECTION("CrcNoHeader with nonzero bodySize still below CrcSize") {
         using Packager = aglio::Packager<Test::packager::Configs::CrcNoHeader>;
 
-        for(std::uint32_t bad_size : {1u, 2u, 3u}) {
-            std::vector<std::byte> buffer(4 + bad_size, std::byte{0});
-            std::memcpy(buffer.data(), &bad_size, sizeof(bad_size));
+        for(std::uint32_t badSize : {1U, 2U, 3U}) {
+            std::vector<std::byte> buffer(4 + badSize, std::byte{0});
+            std::memcpy(buffer.data(), &badSize, sizeof(badSize));
 
-            int  out    = 0;
-            auto result = Packager::unpack(buffer, out);
+            int        out    = 0;
+            auto const result = Packager::unpack(buffer, out);
             CHECK(!result.has_value());
         }
     }
@@ -732,7 +739,7 @@ TEST_CASE("Packager: PackageStart byte pattern in body",
     REQUIRE(Packager::pack(buffer, payload));
 
     std::vector<std::uint8_t> out;
-    auto                      result = Packager::unpack(buffer, out);
+    auto const                result = Packager::unpack(buffer, out);
     REQUIRE(result.has_value());
     CHECK(out == payload);
 }
@@ -745,7 +752,7 @@ TEST_CASE("Packager: MaxSize exceeded rejects oversized body",
     Packager::pack(buffer, std::string{"hello world"});
 
     std::string out;
-    auto        result = Packager::unpack(buffer, out);
+    auto const  result = Packager::unpack(buffer, out);
     CHECK(!result.has_value());
 }
 
@@ -753,17 +760,17 @@ TEST_CASE("Packager: garbage prefix with valid message after",
           "[packager]") {
     using Packager = aglio::Packager<Test::packager::Configs::Full>;
 
-    std::vector<std::byte> valid_buf{};
-    REQUIRE(Packager::pack(valid_buf, int{77}));
+    std::vector<std::byte> validBuf{};
+    REQUIRE(Packager::pack(validBuf, int{77}));
 
     std::vector<std::byte> buffer{};
     buffer.push_back(std::byte{0xCD});
     buffer.push_back(std::byte{0xAB});
     for(int i = 0; i < 20; ++i) { buffer.push_back(std::byte{0x00}); }
-    buffer.insert(buffer.end(), valid_buf.begin(), valid_buf.end());
+    buffer.insert(buffer.end(), validBuf.begin(), validBuf.end());
 
-    int  out    = 0;
-    auto result = Packager::unpack(buffer, out);
+    int        out    = 0;
+    auto const result = Packager::unpack(buffer, out);
     REQUIRE(result.has_value());
     CHECK(out == 77);
 }
@@ -772,15 +779,15 @@ TEST_CASE("Packager: empty struct round-trip with CRC",
           "[packager]") {
     using Packager = aglio::Packager<Test::packager::Configs::Full>;
 
-    Types::Empty           empty_in{};
+    Types::Empty           emptyIn{};
     std::vector<std::byte> buffer{};
-    REQUIRE(Packager::pack(buffer, empty_in));
+    REQUIRE(Packager::pack(buffer, emptyIn));
 
-    Types::Empty empty_out{};
-    auto         result = Packager::unpack(buffer, empty_out);
+    Types::Empty emptyOut{};
+    auto         result = Packager::unpack(buffer, emptyOut);
     REQUIRE(result.has_value());
     CHECK(result->consumed == buffer.size());
-    CHECK(empty_in == empty_out);
+    CHECK(emptyIn == emptyOut);
 }
 
 TEST_CASE("validate: type-dispatched unpacking via HeaderData",
@@ -789,66 +796,66 @@ TEST_CASE("validate: type-dispatched unpacking via HeaderData",
 
     SECTION("SensorData (typeId=1)") {
         std::vector<std::byte>             buffer{};
-        Test::packager::SensorData const   data_in{.temperature = 235, .humidity = 650};
+        Test::packager::SensorData const   dataIn{.temperature = 235, .humidity = 650};
         Test::packager::PacketHeader const hdr{.id = 100, .typeId = 1};
 
-        REQUIRE(Packager::pack(buffer, data_in, hdr));
+        REQUIRE(Packager::pack(buffer, dataIn, hdr));
 
         auto pkg = Packager::validate(buffer);
         REQUIRE(pkg.has_value());
-        CHECK(pkg->header_data == hdr);
+        CHECK(pkg->headerData == hdr);
         CHECK(pkg->consumed == buffer.size());
 
         auto                              body = pkg->body;
         aglio::DynamicDeserializationView debuff{body};
-        Test::packager::SensorData        data_out{};
-        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, data_out));
-        CHECK(data_out == data_in);
+        Test::packager::SensorData        dataOut{};
+        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, dataOut));
+        CHECK(dataOut == dataIn);
     }
 
     SECTION("CommandMsg (typeId=2)") {
         std::vector<std::byte>             buffer{};
-        Test::packager::CommandMsg const   msg_in{.command_code = 0xDEAD, .payload = "reboot"};
+        Test::packager::CommandMsg const   msgIn{.commandCode = 0xDEAD, .payload = "reboot"};
         Test::packager::PacketHeader const hdr{.id = 200, .typeId = 2};
 
-        REQUIRE(Packager::pack(buffer, msg_in, hdr));
+        REQUIRE(Packager::pack(buffer, msgIn, hdr));
 
         auto pkg = Packager::validate(buffer);
         REQUIRE(pkg.has_value());
-        CHECK(pkg->header_data == hdr);
+        CHECK(pkg->headerData == hdr);
         CHECK(pkg->consumed == buffer.size());
 
         auto                              body = pkg->body;
         aglio::DynamicDeserializationView debuff{body};
-        Test::packager::CommandMsg        msg_out{};
-        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, msg_out));
-        CHECK(msg_out == msg_in);
+        Test::packager::CommandMsg        msgOut{};
+        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, msgOut));
+        CHECK(msgOut == msgIn);
     }
 
     SECTION("StatusReport (typeId=3)") {
         std::vector<std::byte>             buffer{};
-        Test::packager::StatusReport const report_in{.status = 1, .uptime = 86400};
+        Test::packager::StatusReport const reportIn{.status = 1, .uptime = 86400};
         Test::packager::PacketHeader const hdr{.id = 300, .typeId = 3};
 
-        REQUIRE(Packager::pack(buffer, report_in, hdr));
+        REQUIRE(Packager::pack(buffer, reportIn, hdr));
 
         auto pkg = Packager::validate(buffer);
         REQUIRE(pkg.has_value());
-        CHECK(pkg->header_data == hdr);
+        CHECK(pkg->headerData == hdr);
         CHECK(pkg->consumed == buffer.size());
 
         auto                              body = pkg->body;
         aglio::DynamicDeserializationView debuff{body};
-        Test::packager::StatusReport      report_out{};
-        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, report_out));
-        CHECK(report_out == report_in);
+        Test::packager::StatusReport      reportOut{};
+        REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, reportOut));
+        CHECK(reportOut == reportIn);
     }
 
     SECTION("dispatch via typeId switch") {
         std::vector<std::byte> buffer{};
 
         Test::packager::SensorData const   sensor{.temperature = 100, .humidity = 500};
-        Test::packager::CommandMsg const   cmd{.command_code = 42, .payload = "hello"};
+        Test::packager::CommandMsg const   cmd{.commandCode = 42, .payload = "hello"};
         Test::packager::StatusReport const status{.status = 2, .uptime = 1000};
 
         REQUIRE(Packager::pack(buffer, sensor, {.id = 1, .typeId = 1}));
@@ -864,13 +871,13 @@ TEST_CASE("validate: type-dispatched unpacking via HeaderData",
             auto                              body = pkg->body;
             aglio::DynamicDeserializationView debuff{body};
 
-            switch(pkg->header_data.typeId) {
+            switch(pkg->headerData.typeId) {
             case 1:
                 {
                     Test::packager::SensorData out{};
                     REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, out));
                     CHECK(out == sensor);
-                    CHECK(pkg->header_data.id == 1);
+                    CHECK(pkg->headerData.id == 1);
                 }
                 break;
             case 2:
@@ -878,7 +885,7 @@ TEST_CASE("validate: type-dispatched unpacking via HeaderData",
                     Test::packager::CommandMsg out{};
                     REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, out));
                     CHECK(out == cmd);
-                    CHECK(pkg->header_data.id == 2);
+                    CHECK(pkg->headerData.id == 2);
                 }
                 break;
             case 3:
@@ -886,7 +893,7 @@ TEST_CASE("validate: type-dispatched unpacking via HeaderData",
                     Test::packager::StatusReport out{};
                     REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, out));
                     CHECK(out == status);
-                    CHECK(pkg->header_data.id == 3);
+                    CHECK(pkg->headerData.id == 3);
                 }
                 break;
             default: FAIL("unexpected typeId");
@@ -905,22 +912,22 @@ TEST_CASE("validate: round-trip preserves header info and body bytes",
     using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
 
     std::vector<std::byte> buffer{};
-    int const              value_in = 1234;
-    std::uint8_t const     info_in  = 42;
+    int const              valueIn = 1234;
+    std::uint8_t const     infoIn  = 42;
 
-    REQUIRE(Packager::pack(buffer, value_in, info_in));
+    REQUIRE(Packager::pack(buffer, valueIn, infoIn));
 
     auto pkg = Packager::validate(buffer);
     REQUIRE(pkg.has_value());
-    CHECK(pkg->header_data == info_in);
+    CHECK(pkg->headerData == infoIn);
     CHECK(pkg->consumed == buffer.size());
     CHECK(!pkg->body.empty());
 
-    auto                              body_copy = pkg->body;
-    int                               value_out = 0;
-    aglio::DynamicDeserializationView debuff{body_copy};
-    REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, value_out));
-    CHECK(value_out == value_in);
+    auto                              bodyCopy = pkg->body;
+    int                               valueOut = 0;
+    aglio::DynamicDeserializationView debuff{bodyCopy};
+    REQUIRE(aglio::Serializer<std::uint32_t>::deserialize(debuff, valueOut));
+    CHECK(valueOut == valueIn);
 }
 
 TEST_CASE("validate: corrupted package returns nullopt",
@@ -928,10 +935,10 @@ TEST_CASE("validate: corrupted package returns nullopt",
     using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
 
     std::vector<std::byte> buffer{};
-    int const              value_in = 5678;
-    std::uint8_t const     info_in  = 7;
+    int const              valueIn = 5678;
+    std::uint8_t const     infoIn  = 7;
 
-    REQUIRE(Packager::pack(buffer, value_in, info_in));
+    REQUIRE(Packager::pack(buffer, valueIn, infoIn));
 
     buffer[11] ^= std::byte{0xFF};
 
@@ -945,14 +952,98 @@ TEST_CASE("validate: with described HeaderData",
     using Packager = aglio::Packager<Test::packager::Configs::WithDescribedHeaderData>;
 
     std::vector<std::byte>      buffer{};
-    int const                   value_in = 4321;
-    Test::packager::MsgId const info_in{.msg_type = 7, .channel = 3};
+    int const                   valueIn = 4321;
+    Test::packager::MsgId const infoIn{.msgType = 7, .channel = 3};
 
-    REQUIRE(Packager::pack(buffer, value_in, info_in));
+    REQUIRE(Packager::pack(buffer, valueIn, infoIn));
 
     auto pkg = Packager::validate(buffer);
     REQUIRE(pkg.has_value());
-    CHECK(pkg->header_data.msg_type == info_in.msg_type);
-    CHECK(pkg->header_data.channel == info_in.channel);
+    CHECK(pkg->headerData.msgType == infoIn.msgType);
+    CHECK(pkg->headerData.channel == infoIn.channel);
     CHECK(pkg->consumed == buffer.size());
+}
+
+namespace Test::packager {
+
+/// A vector with its bound in its type, like a static vector: capacity() is static.
+template<typename T, std::size_t N>
+struct CappedVector : std::vector<T> {
+    using std::vector<T>::vector;
+
+    static constexpr std::size_t capacity() { return N; }
+};
+
+struct Bounded {
+    std::uint8_t                   id{};
+    CappedVector<std::uint16_t, 4> values;
+    std::optional<std::uint32_t>   extra;
+};
+
+/// Every config, the small and narrow ones too: always_fits is false for some of them.
+using BoundConfigsList = decltype(std::tuple_cat(std::declval<ConfigsList>(),
+                                                 std::declval<std::tuple<Configs::WithHeaderData,
+                                                                         Configs::SmallMax,
+                                                                         Configs::NarrowSize,
+                                                                         Configs::TinySize>>()));
+
+template<typename Packager,
+         typename Config,
+         typename Buffer,
+         typename T>
+bool packWithHeader(Buffer&  buffer,
+                    T const& v) {
+    if constexpr(requires { typename Config::HeaderData; }) {
+        return Packager::pack(buffer, v, typename Config::HeaderData{});
+    } else {
+        return Packager::pack(buffer, v);
+    }
+}
+
+}   // namespace Test::packager
+
+TEMPLATE_LIST_TEST_CASE(
+  "A value at its largest packs to max_packed_size, and only into a frame "
+  "that holds it",
+  "[packager][max_serialized_size]",
+  Test::packager::BoundConfigsList) {
+    using Packager = aglio::Packager<TestType>;
+    using T        = Test::packager::Bounded;
+    T const v{
+      .id     = 1,
+      .values = {1, 2, 3, 4},
+      .extra  = 5U
+    };
+
+    static_assert(Packager::template max_packed_size<T>
+                  == Packager::FrameOverhead
+                       + aglio::max_serialized_size_v<T, typename TestType::Size_t>);
+
+    std::vector<std::byte> buffer{};
+    bool const             packed = Test::packager::packWithHeader<Packager, TestType>(buffer, v);
+
+    if constexpr(Packager::template always_fits<T>) {
+        static_assert(Packager::template requireAlwaysFits<T>());
+        REQUIRE(packed);
+        CHECK(buffer.size() == Packager::template max_packed_size<T>);
+
+        // A buffer of exactly that size never refuses a T.
+        Test::packager::FixedBuffer<Packager::template max_packed_size<T>> exact{};
+        REQUIRE(Test::packager::packWithHeader<Packager, TestType>(exact, v));
+        CHECK(exact.size() == exact.capacity());
+    } else {
+        CHECK(!packed);
+        CHECK(buffer.empty());
+    }
+}
+
+TEST_CASE("A type without a worst case never always fits",
+          "[packager][max_serialized_size]") {
+    using Packager = aglio::Packager<Test::packager::Configs::NarrowSize>;
+    static_assert(!Packager::always_fits<std::vector<std::uint8_t>>);
+    static_assert(Packager::always_fits<std::uint32_t>);
+    static_assert(Packager::requireAlwaysFits<std::uint32_t>());
+    static_assert(!Packager::always_fits<Test::packager::CappedVector<std::uint8_t, 1000>>,
+                  "past NarrowSize's 512-byte MaxSize");
+    static_assert(Packager::MaxFrameSize == 512);
 }

@@ -14,13 +14,13 @@ struct MyCrc {
 
     static type calc(std::span<std::byte const> data) {
         type crc = 0;
-        for(auto b : data) { crc += static_cast<type>(b); }
+        for(auto const b : data) { crc += static_cast<type>(b); }
         return crc;
     }
 };
 
 struct MsgId {
-    std::uint8_t msg_type{};
+    std::uint8_t msgType{};
     std::uint8_t channel{};
     bool         operator==(MsgId const&) const = default;
 };
@@ -33,10 +33,10 @@ struct MsgIdCrc {
     // implicit-conversion check, which is fatal in the fuzz build.
     static type calc(std::span<std::byte const> data) {
         type r{};
-        for(auto b : data) {
-            r.msg_type = static_cast<std::uint8_t>((r.msg_type + static_cast<unsigned>(b)) & 0xFFu);
+        for(auto const b : data) {
+            r.msgType = static_cast<std::uint8_t>((r.msgType + static_cast<unsigned>(b)) & 0xFFU);
             r.channel
-              = static_cast<std::uint8_t>((r.channel + static_cast<unsigned>(b) * 3u) & 0xFFu);
+              = static_cast<std::uint8_t>((r.channel + static_cast<unsigned>(b) * 3U) & 0xFFU);
         }
         return r;
     }

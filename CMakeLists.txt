@@ -35,7 +35,13 @@ if(NOT TARGET glaze_glaze)
     endif()
 endif()
 
-project(aglio VERSION 0.2.8)
+project(aglio VERSION 0.2.9)
+
+# Before the target: its INSTALL_INTERFACE include directory is CMAKE_INSTALL_INCLUDEDIR, empty until this runs. With it
+# later, the exported target carried no include directory, and an installed aglio only worked from a prefix the compiler
+# searches anyway (/usr/local) - from any other prefix a consumer silently compiled against whatever aglio sat there.
+# `just install-check` checks the exported directory.
+include(GNUInstallDirs)
 
 add_library(aglio INTERFACE)
 target_include_directories(aglio INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -88,7 +94,6 @@ endif()
 option(AGLIO_INSTALL "Generate aglio install/export rules" "${PROJECT_IS_TOP_LEVEL}")
 
 if(AGLIO_INSTALL)
-    include(GNUInstallDirs)
     include(CMakePackageConfigHelpers)
 
     install(DIRECTORY src/aglio DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

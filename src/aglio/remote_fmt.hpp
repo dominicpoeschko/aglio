@@ -9,6 +9,7 @@
     #include <cstddef>
     #include <string_view>
     #include <tuple>
+    #include <utility>
 
 template<aglio::Described T>
 struct remote_fmt::formatter<T> {
@@ -53,14 +54,23 @@ struct remote_fmt::formatter<T> {
     static constexpr auto named_fmt    = getNamedFmtString();
     static constexpr auto named_fmt_sv = std::string_view{named_fmt.data(), named_fmt.size()};
 
-    template<typename FormatContext>
-    constexpr auto format(T const&       v,
-                          FormatContext& ctx) const {
-        return glz::apply(
-          [&](auto const&... values) {
-              return format_to(ctx.out(), sc::create([] { return named_fmt_sv; }), values...);
-          },
-          glz::to_tie(v));
+    // The sub format string above with the fields' own descriptors (remote_fmt's `F`): static, so a type entry of
+    // the catalog - only the field values go on the wire.
+    static consteval auto text() {
+        return []<std::size_t... Is>(std::index_sequence<Is...>) {
+            return remote_fmt::subFormatDescriptor<glz::field_t<T, Is>...>(
+              sc::create([] { return named_fmt_sv; }));
+        }(std::make_index_sequence<glz::reflect<T>::size>{});
+    }
+
+    static consteval auto descriptor() { return remote_fmt::typeDescriptor<decltype(text())>(); }
+
+    template<typename Printer>
+    constexpr void format(T const& v,
+                          Printer& printer) const {
+        remote_fmt::typeEntry<decltype(text())>();
+        glz::apply([&](auto const&... values) { printer.formatArguments(values...); },
+                   glz::to_tie(v));
     }
 };
 #endif
