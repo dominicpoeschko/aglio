@@ -35,7 +35,7 @@ if(NOT TARGET glaze_glaze)
     endif()
 endif()
 
-project(aglio VERSION 0.2.9)
+project(aglio VERSION 0.3.0)
 
 # Before the target: its INSTALL_INTERFACE include directory is CMAKE_INSTALL_INCLUDEDIR, empty until this runs. With it
 # later, the exported target carried no include directory, and an installed aglio only worked from a prefix the compiler

@@ -68,7 +68,6 @@ struct remote_fmt::formatter<T> {
     template<typename Printer>
     constexpr void format(T const& v,
                           Printer& printer) const {
-        remote_fmt::typeEntry<decltype(text())>();
         glz::apply([&](auto const&... values) { printer.formatArguments(values...); },
                    glz::to_tie(v));
     }
