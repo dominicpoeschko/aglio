@@ -11,6 +11,7 @@
 #   just fuzz-replay        # replay the fuzz corpus once, as CI's blocking fuzz job (clang only)
 #   just fuzz               # explore with libFuzzer for a while, as CI's fuzz-explore job
 #   just remote-fmt         # the __has_include-guarded remote_fmt integration
+#   just tidy               # clang-tidy over the tests and src/ (tidy-remote-fmt: remote_fmt.hpp)
 #   just install-check      # consume an installed aglio via find_package
 #
 # The first configure of any tree fetches cmake_helpers, glaze, enchantum,
@@ -156,14 +157,19 @@ fuzz seconds="300" seed="0": fuzz-build
 
 # Nothing else compiles the __has_include-guarded src/aglio/remote_fmt.hpp.
 # The remote_fmt integration: builds and tests it against upstream master.
-remote-fmt:
+remote-fmt: configure-remote-fmt
+    cmake --build "{{ build_root }}/remote-fmt" -j{{ jobs }}
+    ctest --test-dir "{{ build_root }}/remote-fmt" --output-on-failure -j{{ jobs }}
+
+# Configure build/remote-fmt (clang, with a compile database for tidy-remote-fmt)
+[private]
+configure-remote-fmt:
     #!/usr/bin/env bash
     set -euo pipefail
     dir="{{ build_root }}/remote-fmt"
     just --justfile "{{ self }}" guard "$dir" "{{ root }}/tests/remote_fmt"
-    env CC=clang CXX=clang++ cmake -S "{{ root }}/tests/remote_fmt" -B "$dir" -G Ninja
-    cmake --build "$dir" -j{{ jobs }}
-    ctest --test-dir "$dir" --output-on-failure -j{{ jobs }}
+    env CC=clang CXX=clang++ cmake -S "{{ root }}/tests/remote_fmt" -B "$dir" -G Ninja \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
 # A broken export set or an unshipped header shows up here and nowhere else.
 # Consume aglio as a user does: install it, then find_package it. ENCHANTUM ON/OFF.
@@ -177,9 +183,11 @@ install-check enchantum="ON":
         -DCMAKE_PREFIX_PATH="$prefix" -DCMAKE_INSTALL_PREFIX="$prefix"
     cmake --install "{{ build_root }}/install-{{ enchantum }}"
     env CC=clang CXX=clang++ cmake -S "{{ root }}/tests/install" -B "{{ build_root }}/consumer-{{ enchantum }}" \
-        -G Ninja -DCMAKE_PREFIX_PATH="$prefix"
+        -G Ninja -DCMAKE_PREFIX_PATH="$prefix" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
     cmake --build "{{ build_root }}/consumer-{{ enchantum }}" -j{{ jobs }}
     ctest --test-dir "{{ build_root }}/consumer-{{ enchantum }}" --output-on-failure
+    run-clang-tidy -p "{{ build_root }}/consumer-{{ enchantum }}" -quiet -warnings-as-errors='*' \
+        '{{ root }}/tests/install/main\.cpp$'
 
 # Remove build/<config>
 clean config=default_config:
@@ -200,6 +208,16 @@ tidy *args: (configure "clang")
     run-clang-tidy -p "{{ build_root }}/clang" -quiet -j{{ jobs }} -warnings-as-errors='*' "$@" \
         '{{ root }}/tests/(?!compile_fail_)[^/]*\.cpp$'
 
-# The configured clang tree `tidy` reads, if there is one (for a caller that runs clang-tidy over several trees)
+# clang-tidy over the remote_fmt integration (tests/remote_fmt and src/aglio/remote_fmt.hpp, which the clang tree
+# never compiles). The anchored header filter keeps remote_fmt's own src/ out wherever it was fetched to.
+# clang-tidy over the remote_fmt tree (exit 0 clean, 1 findings)
+[positional-arguments]
+tidy-remote-fmt *args: configure-remote-fmt
+    run-clang-tidy -p "{{ build_root }}/remote-fmt" -quiet -j{{ jobs }} -warnings-as-errors='*' \
+        -header-filter='^{{ root }}/(src|tests)/' "$@" '{{ root }}/tests/remote_fmt/[^/]*\.cpp$'
+
+# For a caller that runs clang-tidy over several trees:
+# The configured clang trees `tidy` and `tidy-remote-fmt` read, if there are any
 tidy-trees:
     @[ ! -f "{{ build_root }}/clang/compile_commands.json" ] || echo "{{ build_root }}/clang"
+    @[ ! -f "{{ build_root }}/remote-fmt/compile_commands.json" ] || echo "{{ build_root }}/remote-fmt"

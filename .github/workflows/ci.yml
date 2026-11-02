@@ -162,10 +162,12 @@ jobs:
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel clang
+                pacman -S --noconfirm git cmake base-devel python clang
 
             - name: Configure CMake
-              run: cmake -S tests/remote_fmt -B build-remote-fmt -DUSE_WARNINGS_AS_ERRORS=ON
+              run: >
+                cmake -S tests/remote_fmt -B build-remote-fmt -DUSE_WARNINGS_AS_ERRORS=ON
+                -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
               env:
                 CC: clang
                 CXX: clang++
@@ -175,6 +177,14 @@ jobs:
 
             - name: Run tests
               run: cd build-remote-fmt && ctest --output-on-failure
+
+            # The only clang-tidy run that sees src/aglio/remote_fmt.hpp. The anchored header filter keeps
+            # remote_fmt's own src/ out wherever FetchContent put it.
+            - name: clang-tidy
+              timeout-minutes: 30
+              run: >
+                run-clang-tidy -p build-remote-fmt -quiet -warnings-as-errors='*'
+                -header-filter="^$PWD/(src|tests)/" "$PWD/tests/remote_fmt/[^/]*\.cpp$"
 
     # The only job that consumes aglio the way a user does: find_package against an installed copy, which is where a
     # broken export set, a missing find_dependency or an unshipped header shows up. Uses a stock glaze rather than the
@@ -195,7 +205,7 @@ jobs:
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel clang
+                pacman -S --noconfirm git cmake base-devel python clang
 
             # aglio's install rules need glaze as a pre-installed config package; enchantum it fetches and installs
             # alongside itself.
@@ -217,12 +227,20 @@ jobs:
 
             - name: Build and run the consumer
               run: |
-                cmake -S tests/install -B build-consumer -DCMAKE_PREFIX_PATH="$PWD/prefix"
+                cmake -S tests/install -B build-consumer -DCMAKE_PREFIX_PATH="$PWD/prefix" \
+                    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
                 cmake --build build-consumer
                 cd build-consumer && ctest --output-on-failure
               env:
                 CC: clang
                 CXX: clang++
+
+            # The consumer's own source; aglio's headers come from the prefix here and are tidied by the other jobs.
+            - name: clang-tidy
+              timeout-minutes: 10
+              run: >
+                run-clang-tidy -p build-consumer -quiet -warnings-as-errors='*'
+                "$PWD/tests/install/main\.cpp$"
 
     release:
         if: github.event_name == 'workflow_dispatch'

@@ -108,7 +108,7 @@ struct WithContainer {
 enum class Color : std::uint8_t { red = 1, green = 2 };
 
 struct WithEnum {
-    Color c{};
+    Color c{Color::red};
     bool  flag{};
 };
 

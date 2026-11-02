@@ -45,10 +45,10 @@ void check(bool             ok,
 }   // namespace
 
 #ifdef AGLIO_USE_ENCHANTUM
-enum class Level : std::uint8_t { Low = 1, High = 2 };
+enum class Level : std::uint8_t { low = 1, high = 2 };
 
 struct WithEnum {
-    Level level{Level::High};
+    Level level{Level::high};
 };
 #endif
 
@@ -71,7 +71,7 @@ int main() {
     // The macro comes from the installed package, so this also checks that the enchantum wiring
     // survived the install rather than only working in the build tree.
 #ifdef AGLIO_USE_ENCHANTUM
-    check(std::format("{}", WithEnum{}) == R"({level: High})", "enum by name");
+    check(std::format("{}", WithEnum{}) == R"({level: high})", "enum by name");
 #endif
 
     if(failures != 0) { return 1; }
