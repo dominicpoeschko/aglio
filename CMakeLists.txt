@@ -27,7 +27,7 @@ if(NOT TARGET glaze_glaze)
             GIT_REPOSITORY
             https://github.com/stephenberry/glaze.git
             GIT_TAG
-            v9.0.0
+            v9.1.0
             GIT_BRANCH
             main
             PATCH_FILE
@@ -35,7 +35,7 @@ if(NOT TARGET glaze_glaze)
     endif()
 endif()
 
-project(aglio VERSION 0.3.1)
+project(aglio VERSION 0.3.2)
 
 # Before the target: its INSTALL_INTERFACE include directory is CMAKE_INSTALL_INCLUDEDIR, empty until this runs. With it
 # later, the exported target carried no include directory, and an installed aglio only worked from a prefix the compiler
