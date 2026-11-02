@@ -21,8 +21,6 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 root := source_directory()
 
-# The Kvasir_SDK checkout whose tools/tidy.py and .clang-tidy `tidy` uses (the sibling, or KVASIR_ROOT)
-kvasir_root := env('KVASIR_ROOT', parent_directory(root) / 'Kvasir_SDK')
 self := source_file()   # not justfile(): that names the ROOT justfile when loaded as a module
 build_root := root / "build"
 jobs := num_cpus()
@@ -193,13 +191,15 @@ clean-all:
 
 # --- clang-tidy ----------------------------------------------------------------
 
-# Kvasir_SDK/tools/tidy.py with the SDK's .clang-tidy over build/clang: findings in this repository fail, the
-# other libraries' count as foreign. `just tidy --changed`, `just tidy --fix`, `--audit <check>`, `--only '<glob>'`.
+# run-clang-tidy with this repository's .clang-tidy over the clang tree's test sources (the compile-fail ones are
+# meant not to compile); any finding in src/ or tests/ fails. Extra arguments go to run-clang-tidy: `just tidy -fix`,
+# `just tidy -checks=<glob>`.
 # clang-tidy over the clang host tree (exit 0 clean, 1 findings)
 [positional-arguments]
 tidy *args: (configure "clang")
-    python3 -B "{{ kvasir_root }}/tools/tidy.py" --tree "{{ build_root }}/clang" --repo "{{ root }}" "$@"
+    run-clang-tidy -p "{{ build_root }}/clang" -quiet -j{{ jobs }} -warnings-as-errors='*' "$@" \
+        '{{ root }}/tests/(?!compile_fail_)[^/]*\.cpp$'
 
-# The configured clang tree `tidy` reads, if there is one (the workspace's `just tidy` collects them)
+# The configured clang tree `tidy` reads, if there is one (for a caller that runs clang-tidy over several trees)
 tidy-trees:
     @[ ! -f "{{ build_root }}/clang/compile_commands.json" ] || echo "{{ build_root }}/clang"

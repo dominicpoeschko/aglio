@@ -13,5 +13,5 @@ int main() {
     WithRef                         b{.value = 1, .ref = x};
     std::vector<std::byte>          buf;
     aglio::DynamicSerializationView view{buf};
-    aglio::serializer<WithRef, std::uint32_t>::serialize(b, view);
+    aglio::TypeSerializer<WithRef, std::uint32_t>::serialize(b, view);
 }

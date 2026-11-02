@@ -105,7 +105,7 @@ struct WithContainer {
     std::optional<int> none{};
 };
 
-enum class Color : std::uint8_t { Red = 1, Green = 2 };
+enum class Color : std::uint8_t { red = 1, green = 2 };
 
 struct WithEnum {
     Color c{};
@@ -119,7 +119,7 @@ template<typename T>
 void checkTypesEntry() {
     constexpr auto name = glz::type_name<T>;
     check(roundTrip("{}"_sc, Types::createDefault<T>()),
-          Test::expectedFormat<T, Test::Api::RemoteFmt>(),
+          Test::expectedFormat<T, Test::Api::remoteFmt>(),
           std::string{name}.c_str());
 }
 
@@ -133,7 +133,7 @@ int main() {
     // Anchor for the loop above, which derives its expectations from glz::type_name and so cannot
     // notice a change in it. Written out in full on purpose.
     check(roundTrip("{}"_sc, Types::createDefault<Types::Enum>()),
-          "@TYPENAME(Types::Enum){color: Blue, status: Active}",
+          "@TYPENAME(Types::Enum){color: blue, status: active}",
           "qualified type name in the marker");
 
     check(roundTrip("{}"_sc, Point{.x = 1, .y = 2}),
@@ -165,8 +165,8 @@ int main() {
           "container and optional members");
 
     // The parser reflects the name with enchantum, so it survives the wire.
-    check(roundTrip("{}"_sc, WithEnum{.c = Color::Green, .flag = true}),
-          "@TYPENAME(WithEnum){c: Green, flag: true}",
+    check(roundTrip("{}"_sc, WithEnum{.c = Color::green, .flag = true}),
+          "@TYPENAME(WithEnum){c: green, flag: true}",
           "enum member");
 
     // Has to compose inside a larger format string, alongside other arguments.

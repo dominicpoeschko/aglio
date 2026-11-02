@@ -28,7 +28,7 @@ struct Nested {
 // Braces are doubled because the result is itself a format string. These also pin the hand-written
 // buffer size in getNamedFmtString(): miscounting either way is ill-formed in a constant expression,
 // so the arithmetic cannot drift once this file is compiled at all - which is the point of it.
-static_assert(remote_fmt::formatter<Point>::named_fmt_sv == "@TYPENAME(Point){{x: {}, y: {}}}");
-static_assert(remote_fmt::formatter<Empty>::named_fmt_sv == "@TYPENAME(Empty){{}}");
-static_assert(remote_fmt::formatter<OneField>::named_fmt_sv == "@TYPENAME(OneField){{v: {}}}");
-static_assert(remote_fmt::formatter<Nested>::named_fmt_sv == "@TYPENAME(Nested){{p: {}, n: {}}}");
+static_assert(remote_fmt::formatter<Point>::namedFmtSv == "@TYPENAME(Point){{x: {}, y: {}}}");
+static_assert(remote_fmt::formatter<Empty>::namedFmtSv == "@TYPENAME(Empty){{}}");
+static_assert(remote_fmt::formatter<OneField>::namedFmtSv == "@TYPENAME(OneField){{v: {}}}");
+static_assert(remote_fmt::formatter<Nested>::namedFmtSv == "@TYPENAME(Nested){{p: {}, n: {}}}");

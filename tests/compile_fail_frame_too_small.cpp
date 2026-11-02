@@ -4,7 +4,7 @@
 
 struct Config {
     using Size_t                           = std::uint16_t;
-    static constexpr std::uint16_t MaxSize = 16;
+    static constexpr std::uint16_t maxSize = 16;
 };
 
 // 2 size bytes of header + 2 count bytes + 20 elements: 24 bytes into a 16-byte frame.

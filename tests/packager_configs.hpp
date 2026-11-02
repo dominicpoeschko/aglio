@@ -50,7 +50,7 @@ namespace Configs {
 
     struct SimplePackageStart {
         using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
+        static constexpr std::uint16_t packageStart = 0xABCD;
     };
 
     struct SimpleCrc {
@@ -61,57 +61,57 @@ namespace Configs {
     struct CrcNoHeader {
         using Crc                          = MyCrc;
         using Size_t                       = std::uint32_t;
-        static constexpr bool UseHeaderCrc = false;
+        static constexpr bool useHeaderCrc = false;
     };
 
     struct Full {
         using Crc                                   = MyCrc;
         using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
+        static constexpr std::uint16_t packageStart = 0xABCD;
     };
 
     struct FullNoHeaderCrc {
         using Crc                                   = MyCrc;
         using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
-        static constexpr bool          UseHeaderCrc = false;
+        static constexpr std::uint16_t packageStart = 0xABCD;
+        static constexpr bool          useHeaderCrc = false;
     };
 
     struct WithHeaderData {
         using Crc                                   = MyCrc;
         using Size_t                                = std::uint32_t;
         using HeaderData                            = std::uint8_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
+        static constexpr std::uint16_t packageStart = 0xABCD;
     };
 
     struct WithDescribedHeaderData {
         using Crc                                   = MyCrc;
         using Size_t                                = std::uint32_t;
         using HeaderData                            = MsgId;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
+        static constexpr std::uint16_t packageStart = 0xABCD;
     };
 
     struct WithDescribedCrc {
         using Crc                                   = MsgIdCrc;
         using Size_t                                = std::uint32_t;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
+        static constexpr std::uint16_t packageStart = 0xABCD;
     };
 
-    // Body size limit far below what the message types serialize to, so the MaxSize rejection
+    // Body size limit far below what the message types serialize to, so the maxSize rejection
     // path is reachable.
     struct SmallMax {
         using Size_t                                = std::uint32_t;
-        static constexpr std::uint32_t MaxSize      = 4;
-        static constexpr std::uint16_t PackageStart = 0xABCD;
+        static constexpr std::uint32_t maxSize      = 4;
+        static constexpr std::uint16_t packageStart = 0xABCD;
     };
 
     // Narrow size field: a 16 bit Size_t makes the header layout differ from the uint32_t
-    // configs above and keeps MaxSize small enough to be hit by fuzzed bodies.
+    // configs above and keeps maxSize small enough to be hit by fuzzed bodies.
     struct NarrowSize {
         using Crc                                   = MyCrc;
         using Size_t                                = std::uint16_t;
-        static constexpr Size_t        MaxSize      = 512;
-        static constexpr std::uint16_t PackageStart = 0x55AA;
+        static constexpr Size_t        maxSize      = 512;
+        static constexpr std::uint16_t packageStart = 0x55AA;
     };
 
     // One byte size field, for both the framing and the length prefixes the serializer writes.
@@ -120,8 +120,8 @@ namespace Configs {
     struct TinySize {
         using Crc                                  = MyCrc;
         using Size_t                               = std::uint8_t;
-        static constexpr Size_t       MaxSize      = 200;
-        static constexpr std::uint8_t PackageStart = 0x7E;
+        static constexpr Size_t       maxSize      = 200;
+        static constexpr std::uint8_t packageStart = 0x7E;
     };
 
 }   // namespace Configs

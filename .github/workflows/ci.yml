@@ -47,14 +47,14 @@ jobs:
             - name: Run tests
               run: cd build && ctest --output-on-failure
 
-            # clang-tidy (Kvasir_SDK master's tools/tidy.py and .clang-tidy, .github/actions/tidy) over this tree:
-            # this repository's findings fail, the libraries' are counted as foreign
+            # clang-tidy with this repository's .clang-tidy over the test sources (the compile-fail ones are meant not
+            # to compile): any finding in src/ or tests/ fails
             - name: clang-tidy
               if: matrix.compiler.cc == 'clang' && !matrix.compiler.sanitizer
-              uses: kvasir-io/Kvasir_SDK/.github/actions/tidy@master
               timeout-minutes: 30
-              with:
-                trees: build
+              run: >
+                run-clang-tidy -p build -quiet -warnings-as-errors='*'
+                "$PWD/tests/(?!compile_fail_)[^/]*\.cpp$"
 
     # Replays the generated seed corpus and the committed regression inputs once each (-runs=0): same inputs on every
     # machine, so it can block a merge. Clang only until gcc supports -fsanitize=fuzzer.

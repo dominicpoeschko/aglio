@@ -87,7 +87,7 @@ struct Crc16 {
 struct Protocol {
     using Size_t                                = std::uint16_t;
     using Crc                                   = Crc16;
-    static constexpr std::uint16_t PackageStart = 0x55AA;
+    static constexpr std::uint16_t packageStart = 0x55AA;
 };
 using Packager = aglio::Packager<Protocol>;
 
@@ -110,24 +110,24 @@ if it also has `std::string`'s `resize_and_overwrite(n, op)`, nothing in it is f
 
 A type whose serialized size is fixed (`aglio::HasFixedSerializedSize`: numbers, enums, arrays
 and structs of them) costs one bounds check however many fields it has. If you specialize
-`aglio::serializer` for a type of your own, specialize `aglio::serialized_size` with it where the
+`aglio::TypeSerializer` for a type of your own, specialize `aglio::SerializedSize` with it where the
 size is fixed; it has to be the number of bytes the serializer writes, or packing the type fails.
 
-A frame has a configured `MaxSize`, so a message that can grow (a static vector, an optional, a
+A frame has a configured `maxSize`, so a message that can grow (a static vector, an optional, a
 variant) can fail to pack at run time. Its worst case is known at compile time where every
-container in it has a static capacity: `aglio::max_serialized_size_v<T, Size_t>` (and the concept
+container in it has a static capacity: `aglio::maxSerializedSizeV<T, Size_t>` (and the concept
 `aglio::HasMaxSerializedSize`) is the most bytes the serializer writes for any `T` -
 `std::vector`, `std::string` and `std::map` have no such bound. The packager adds its framing:
 
 ```cpp
-static_assert(Packager::FrameOverhead == 2 + 2 + 2 + 2);             // start, size, header CRC, body CRC
-static_assert(Packager::max_packed_size<Telemetry> == Packager::FrameOverhead + 6);
-static_assert(Packager::always_fits<Telemetry>);                     // <= Packager::MaxFrameSize
+static_assert(Packager::frameOverhead == 2 + 2 + 2 + 2);             // start, size, header CRC, body CRC
+static_assert(Packager::maxPackedSize<Telemetry> == Packager::frameOverhead + 6);
+static_assert(Packager::alwaysFits<Telemetry>);                      // <= Packager::maxFrameSize
 static_assert(Packager::requireAlwaysFits<Telemetry>());             // the same, failing with both sizes
 ```
 
 A serializer of your own whose wire format is not the generic one for its type's shape states its
-bound as `static constexpr std::size_t max_serialized_size`.
+bound as `static constexpr std::size_t maxSerializedSize`.
 
 ### JSON
 

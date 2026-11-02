@@ -31,7 +31,7 @@
 template<aglio::Described T>
 struct std::formatter<T>;
 
-namespace aglio::format::detail {
+namespace aglio::format::Detail {
 template<typename T>
 concept IsStdString = std::is_same_v<std::decay_t<T>, std::string>;
 
@@ -55,7 +55,7 @@ auto printValue(OutputIt out,
         return std::format_to(out, "{}", value);
     }
 }
-}   // namespace aglio::format::detail
+}   // namespace aglio::format::Detail
 
 // std::optional
 template<typename T>
@@ -70,7 +70,7 @@ struct std::formatter<std::optional<T>> {
                 FormatContext&          ctx) const {
         if(opt.has_value()) {
             auto out = std::format_to(ctx.out(), "optional(");
-            out      = aglio::format::detail::printValue(out, *opt);
+            out      = aglio::format::Detail::printValue(out, *opt);
             return std::format_to(out, ")");
         }
         return std::format_to(ctx.out(), "none");
@@ -91,11 +91,11 @@ struct std::formatter<std::expected<T, E>> {
                 FormatContext&          ctx) const {
         if(v.has_value()) {
             auto out = std::format_to(ctx.out(), "expected(");
-            if constexpr(!std::is_void_v<T>) { out = aglio::format::detail::printValue(out, *v); }
+            if constexpr(!std::is_void_v<T>) { out = aglio::format::Detail::printValue(out, *v); }
             return std::format_to(out, ")");
         }
         auto out = std::format_to(ctx.out(), "unexpected(");
-        out      = aglio::format::detail::printValue(out, v.error());
+        out      = aglio::format::Detail::printValue(out, v.error());
         return std::format_to(out, ")");
     }
 };
@@ -113,7 +113,7 @@ struct std::formatter<std::variant<Ts...>> {
                 FormatContext&             ctx) const {
         auto out = std::format_to(ctx.out(), "variant(");
         std::visit(
-          [&out](auto const& value) { out = aglio::format::detail::printValue(out, value); },
+          [&out](auto const& value) { out = aglio::format::Detail::printValue(out, value); },
           v);
         return std::format_to(out, ")");
     }
@@ -138,8 +138,8 @@ struct std::formatter<T> {
         out        = std::format_to(out, "{{");
         bool first = true;
 
-        constexpr auto N = glz::reflect<T>::size;
-        glz::for_each<N>([&]<auto I>() {
+        constexpr auto n = glz::reflect<T>::size;
+        glz::for_each<n>([&]<auto I>() {
             if(!first) { out = std::format_to(out, ", "); }
             first = false;
             out   = std::format_to(out,

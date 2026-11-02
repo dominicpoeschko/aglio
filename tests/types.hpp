@@ -17,10 +17,10 @@
 
 namespace Types {
 // Enum types for testing
-enum class Color : std::uint8_t { Red = 1, Green = 2, Blue = 3 };
+enum class Color : std::uint8_t { red = 1, green = 2, blue = 3 };
 
 // The unscoped enum is the case under test (wire size of int).
-enum Status { Unknown = 0, Active = 1, Inactive = 2 };
+enum Status { unknown = 0, active = 1, inactive = 2 };
 
 // All primitive types
 struct Primitive {
@@ -179,7 +179,7 @@ struct Nested {
 
 // Enum types
 struct Enum {
-    Color  color{Color::Red};
+    Color  color{Color::red};
     Status status{};
 
     constexpr auto operator<=>(Enum const&) const = default;
@@ -261,8 +261,8 @@ T createDefault();
 
 // Samples whose printed form check_format compares, not pi and e.
 // NOLINTBEGIN(modernize-use-std-numbers) // short decimals on purpose
-inline constexpr float  SampleF32 = 3.14159f;
-inline constexpr double SampleF64 = 2.71828;
+inline constexpr float  sampleF32 = 3.14159f;
+inline constexpr double sampleF64 = 2.71828;
 // NOLINTEND(modernize-use-std-numbers)
 
 template<>
@@ -275,8 +275,8 @@ Primitive createDefault<Primitive>() {
                      .u16  = 1234,
                      .u32  = 123456,
                      .u64  = 12345678901ULL,
-                     .f32  = SampleF32,
-                     .f64  = SampleF64,
+                     .f32  = sampleF32,
+                     .f64  = sampleF64,
                      .flag = true};
 }
 
@@ -391,7 +391,7 @@ Nested createDefault<Nested>() {
 
 template<>
 Enum createDefault<Enum>() {
-    return Enum{.color = Color::Blue, .status = Active};
+    return Enum{.color = Color::blue, .status = active};
 }
 
 template<>
@@ -407,8 +407,8 @@ Empty createDefault<Empty>() {
 template<>
 ContiguousAssociative createDefault<ContiguousAssociative>() {
     ContiguousAssociative a;
-    a.cset.insert(Color::Red);
-    a.cset.insert(Color::Blue);
+    a.cset.insert(Color::red);
+    a.cset.insert(Color::blue);
     return a;
 }
 

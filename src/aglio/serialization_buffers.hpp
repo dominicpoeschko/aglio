@@ -33,7 +33,7 @@ public:
             return true;
         } else if constexpr(!requires { buffer_.resize(1); }) {
             if(N > static_cast<std::size_t>(buffer_.size()) - position_) { return false; }
-            detail::copyFixed<N>(
+            Detail::copyFixed<N>(
               std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)),
               data.data());
             position_ += N;
@@ -137,7 +137,7 @@ public:
             return true;
         } else {
             if(N > available()) { return false; }
-            detail::copyFixed<N>(
+            Detail::copyFixed<N>(
               data.data(),
               std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)));
             position_ += N;

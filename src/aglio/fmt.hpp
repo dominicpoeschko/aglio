@@ -58,8 +58,8 @@ struct fmt::formatter<T> {
         out        = fmt::format_to(out, "{{");
         bool first = true;
 
-        constexpr auto N = glz::reflect<T>::size;
-        glz::for_each<N>([&]<auto I>() {
+        constexpr auto n = glz::reflect<T>::size;
+        glz::for_each<n>([&]<auto I>() {
             if(!first) { out = fmt::format_to(out, ", "); }
             first = false;
             out   = fmt::format_to(out,

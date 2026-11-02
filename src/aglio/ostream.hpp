@@ -89,7 +89,7 @@ Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
 
 #endif
 
-namespace aglio::detail {
+namespace aglio::Detail {
 
 // Helper to print a single key-value pair.
 template<typename Stream,
@@ -105,19 +105,19 @@ template<typename Stream,
 void printMembers(Stream&  os,
                   T const& v,
                   std::index_sequence<Is...>);
-}   // namespace aglio::detail
+}   // namespace aglio::Detail
 
 template<typename Stream,
          aglio::Described T>
 Stream& operator<<(Stream& os AGLIO_LIFETIMEBOUND,
                    T const&   v) {
     os << '{';
-    aglio::detail::printMembers(os, v, std::make_index_sequence<glz::reflect<T>::size>{});
+    aglio::Detail::printMembers(os, v, std::make_index_sequence<glz::reflect<T>::size>{});
     os << '}';
     return os;
 }
 
-namespace aglio::detail {
+namespace aglio::Detail {
 
 // Helper to print a single key-value pair.
 template<typename Stream,
@@ -157,17 +157,17 @@ void printMembers(Stream&  os,
     auto                        tie           = glz::to_tie(v);
     bool                        first         = true;
     [[maybe_unused]] auto const processMember = [&](auto i) {
-        constexpr std::size_t I = decltype(i)::value;
+        constexpr std::size_t idx = decltype(i)::value;
         if(!first) { os << ", "; }
         first = false;
-        printMember(os, glz::reflect<T>::keys[I], glz::get<I>(tie));
+        printMember(os, glz::reflect<T>::keys[idx], glz::get<idx>(tie));
     };
     (processMember(std::integral_constant<std::size_t, Is>{}), ...);
 }
-}   // namespace aglio::detail
+}   // namespace aglio::Detail
 
 #ifdef AGLIO_OSTREAM_DEFINE_STD
-namespace aglio::ostream::detail {
+namespace aglio::ostream::Detail {
 template<typename T>
 concept IsStdString = std::is_same_v<std::decay_t<T>, std::string>;
 
@@ -195,9 +195,9 @@ Stream& printValue(Stream& os AGLIO_LIFETIMEBOUND,
         return os;
     }
 }
-}   // namespace aglio::ostream::detail
+}   // namespace aglio::ostream::Detail
 
-namespace aglio::ostream::detail {
+namespace aglio::ostream::Detail {
 template<typename Stream,
          typename Tuple,
          std::size_t... Is>
@@ -209,7 +209,7 @@ Stream& printTuple(Stream& os   AGLIO_LIFETIMEBOUND,
     auto const printElement = [&](auto i) {
         if(!first) { os << ", "; }
         first = false;
-        aglio::ostream::detail::printValue(os, std::get<decltype(i)::value>(t));
+        aglio::ostream::Detail::printValue(os, std::get<decltype(i)::value>(t));
     };
     (printElement(std::integral_constant<std::size_t, Is>{}), ...);
     os << ')';
@@ -226,12 +226,12 @@ Stream& printRange(Stream& os   AGLIO_LIFETIMEBOUND,
     for(auto const& elem : r) {
         if(!first) { os << ", "; }
         first = false;
-        aglio::ostream::detail::printValue(os, elem);
+        aglio::ostream::Detail::printValue(os, elem);
     }
     os << ']';
     return os;
 }
-}   // namespace aglio::ostream::detail
+}   // namespace aglio::ostream::Detail
 #endif
 
 #ifdef AGLIO_OSTREAM_DEFINE_STD
@@ -243,7 +243,7 @@ template<typename Stream,
 Stream& operator<<(Stream& os           AGLIO_LIFETIMEBOUND,
                    std::pair<T1,
                              T2> const& p) {
-    aglio::ostream::detail::printTuple(os, p, std::make_index_sequence<2>{});
+    aglio::ostream::Detail::printTuple(os, p, std::make_index_sequence<2>{});
     return os;
 }
 
@@ -252,7 +252,7 @@ template<typename Stream,
          typename... Ts>
 Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
                    std::tuple<Ts...> const& t) {
-    aglio::ostream::detail::printTuple(os, t, std::make_index_sequence<sizeof...(Ts)>{});
+    aglio::ostream::Detail::printTuple(os, t, std::make_index_sequence<sizeof...(Ts)>{});
     return os;
 }
 
@@ -263,7 +263,7 @@ Stream& operator<<(Stream& os              AGLIO_LIFETIMEBOUND,
                    std::optional<T> const& opt) {
     if(opt.has_value()) {
         os << "optional(";
-        aglio::ostream::detail::printValue(os, *opt);
+        aglio::ostream::Detail::printValue(os, *opt);
         os << ")";
     } else {
         os << "none";
@@ -280,11 +280,11 @@ Stream& operator<<(Stream& os              AGLIO_LIFETIMEBOUND,
                                  E> const& v) {
     if(v.has_value()) {
         os << "expected(";
-        if constexpr(!std::is_void_v<T>) { aglio::ostream::detail::printValue(os, *v); }
+        if constexpr(!std::is_void_v<T>) { aglio::ostream::Detail::printValue(os, *v); }
         os << ")";
     } else {
         os << "unexpected(";
-        aglio::ostream::detail::printValue(os, v.error());
+        aglio::ostream::Detail::printValue(os, v.error());
         os << ")";
     }
     return os;
@@ -296,7 +296,7 @@ template<typename Stream,
 Stream& operator<<(Stream& os                 AGLIO_LIFETIMEBOUND,
                    std::variant<Ts...> const& v) {
     os << "variant(";
-    std::visit([&](auto const& value) { aglio::ostream::detail::printValue(os, value); }, v);
+    std::visit([&](auto const& value) { aglio::ostream::Detail::printValue(os, value); }, v);
     os << ")";
     return os;
 }
@@ -308,7 +308,7 @@ template<typename Stream,
 Stream& operator<<(Stream& os                  AGLIO_LIFETIMEBOUND,
                    std::vector<T,
                                Args...> const& v) {
-    aglio::ostream::detail::printRange(os, v);
+    aglio::ostream::Detail::printRange(os, v);
     return os;
 }
 
@@ -319,7 +319,7 @@ template<typename Stream,
 Stream& operator<<(Stream& os           AGLIO_LIFETIMEBOUND,
                    std::array<T,
                               N> const& a) {
-    aglio::ostream::detail::printRange(os, a);
+    aglio::ostream::Detail::printRange(os, a);
     return os;
 }
 
@@ -335,7 +335,7 @@ Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
     for(auto const& value : s) {
         if(!first) { os << ", "; }
         first = false;
-        aglio::ostream::detail::printValue(os, value);
+        aglio::ostream::Detail::printValue(os, value);
     }
     os << '}';
     return os;
@@ -355,9 +355,9 @@ Stream& operator<<(Stream& os               AGLIO_LIFETIMEBOUND,
     for(auto const& [key, value] : m) {
         if(!first) { os << ", "; }
         first = false;
-        aglio::ostream::detail::printValue(os, key);
+        aglio::ostream::Detail::printValue(os, key);
         os << ": ";
-        aglio::ostream::detail::printValue(os, value);
+        aglio::ostream::Detail::printValue(os, value);
     }
     os << '}';
     return os;

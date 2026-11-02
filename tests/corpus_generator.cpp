@@ -31,7 +31,7 @@ void writeSeeds(std::filesystem::path const& outDir) {
     std::vector<std::byte> one{std::byte{static_cast<unsigned char>(Index)}, std::byte{0xFF}};
 
     if(!Test::fuzz::packCase<Case>(one, value)) {
-        // Some configs cannot pack this type at all, MaxSize below the header size for example. Seed
+        // Some configs cannot pack this type at all, maxSize below the header size for example. Seed
         // the selector anyway so the case stays reachable from the corpus.
         std::cout << "case " << Index << ": pack failed, writing filler seed\n";
         one.resize(one.size() + 16);
@@ -63,7 +63,7 @@ int main(int    argc,
 
     [&]<std::size_t... Is>(std::index_sequence<Is...>) {
         (writeSeeds<Is, std::tuple_element_t<Is, Test::fuzz::Cases>>(outDir), ...);
-    }(std::make_index_sequence<Test::fuzz::CaseCount>{});
+    }(std::make_index_sequence<Test::fuzz::caseCount>{});
 
     return 0;
 }

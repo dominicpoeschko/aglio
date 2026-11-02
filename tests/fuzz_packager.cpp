@@ -19,9 +19,9 @@ namespace {
 // pack() destination whose max_size() comes from the input, making the "no room" returns reachable at
 // every offset. Fixed array on purpose: a write past max_size() is then an ASan report, not a pass.
 struct BoundedBuffer {
-    static constexpr std::size_t Capacity{4096};
+    static constexpr std::size_t capacity{4096};
 
-    std::array<std::byte, Capacity> storage{};
+    std::array<std::byte, capacity> storage{};
     std::size_t                     limit{};
     std::size_t                     sz{};
 
@@ -78,8 +78,8 @@ struct RawFixedBuffer : FixedBuffer<N> {
     }
 };
 
-static_assert(aglio::detail::fixed_capacity_v<FixedBuffer<8>>);
-static_assert(aglio::detail::Overwritable<RawFixedBuffer<8>>);
+static_assert(aglio::Detail::fixedCapacityV<FixedBuffer<8>>);
+static_assert(aglio::Detail::Overwritable<RawFixedBuffer<8>>);
 
 template<typename Case,
          typename T>
@@ -118,12 +118,12 @@ void checkFixed(typename Case::Type const&    value,
                 Result const&                 result,
                 std::vector<std::byte> const& want,
                 std::size_t                   prefix) {
-    constexpr std::size_t N = Fixed::capacity();
+    constexpr std::size_t n = Fixed::capacity();
     Fixed                 fixed{};
-    fixed.FixedBuffer<N>::resize(prefix);
+    fixed.FixedBuffer<n>::resize(prefix);
     for(std::size_t i = 0; i < prefix; ++i) { fixed.storage[i] = std::byte(0xC0 + i); }
     bool const ok = packLike<Case>(fixed, value, result);
-    if(ok != (prefix + want.size() <= N)) { std::abort(); }
+    if(ok != (prefix + want.size() <= n)) { std::abort(); }
     if(!ok && fixed.size() != prefix) { std::abort(); }
     if(ok) {
         if(fixed.size() != prefix + want.size()) { std::abort(); }
@@ -144,7 +144,7 @@ void checkRoundTrip(typename Case::Type const& value,
     using Packager = aglio::Packager<typename Case::Config>;
 
     std::vector<std::byte> first{};
-    // Repacking can legitimately fail, e.g. when the body no longer fits Config::MaxSize.
+    // Repacking can legitimately fail, e.g. when the body no longer fits Config::maxSize.
     if(!packLike<Case>(first, value, result)) { return; }
 
     typename Case::Type again{};
@@ -154,7 +154,7 @@ void checkRoundTrip(typename Case::Type const& value,
     if constexpr(requires { result.headerData; }) {
         if(!(againResult->headerData == result.headerData)) { std::abort(); }
     }
-    if constexpr(Case::ValueEq) {
+    if constexpr(Case::valueEq) {
         if(!(again == value)) { std::abort(); }
     }
 
@@ -194,7 +194,7 @@ void run(std::span<std::byte const> wire,
         // Never more bytes than were offered.
         if(consumed > span.size()) { std::abort(); }
 
-        // NeedMoreData: nothing accepted, so re-running the same bytes would loop.
+        // needMoreData: nothing accepted, so re-running the same bytes would loop.
         if(consumed == 0) { break; }
 
         if(result) {
@@ -228,7 +228,7 @@ void run(std::span<std::byte const> wire,
 }
 
 // Frames `material` as one to three packages via the real pack(), so size field and CRCs are correct
-// by construction. False if the config refuses, e.g. body over Config::MaxSize.
+// by construction. False if the config refuses, e.g. body over Config::maxSize.
 template<typename Case>
 bool reframe(std::span<std::byte const> material,
              unsigned int               seed,
@@ -282,7 +282,7 @@ extern "C" std::size_t LLVMFuzzerCustomMutator(std::uint8_t* data,
     #pragma clang diagnostic pop
 #endif
 
-    auto const selector = static_cast<std::size_t>(buffer[0]) % Test::fuzz::CaseCount;
+    auto const selector = static_cast<std::size_t>(buffer[0]) % Test::fuzz::caseCount;
 
     // Keep the selector and capacity bytes, reframe the wire behind them.
     std::vector<std::byte> out{};
@@ -318,7 +318,7 @@ extern "C" int LLVMFuzzerTestOneInput(std::uint8_t const* data,
     #pragma clang diagnostic pop
 #endif
 
-    auto const selector = static_cast<std::size_t>(input[0]) % Test::fuzz::CaseCount;
+    auto const selector = static_cast<std::size_t>(input[0]) % Test::fuzz::caseCount;
     // Unscaled: the sweep has to run out of room at every byte offset, and scaling skips half of
     // them. Larger bodies are covered by the unbounded round-trip check.
     auto const packLimit = static_cast<std::size_t>(input[1]);

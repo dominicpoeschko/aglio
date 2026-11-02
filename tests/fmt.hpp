@@ -10,7 +10,7 @@ void test() {
     auto const t = Types::createDefault<Type>();
     auto const s = ::fmt::format("{}", t);
 
-    Test::checkFormat<Type, Test::Api::Fmt>(s);
+    Test::checkFormat<Type, Test::Api::fmt>(s);
 }
 }   // namespace Test::fmt
 

@@ -21,7 +21,7 @@ template<typename CaseConfig, typename CaseType, bool CaseValueEq = true>
 struct Case {
     using Config                  = CaseConfig;
     using Type                    = CaseType;
-    static constexpr bool ValueEq = CaseValueEq;
+    static constexpr bool valueEq = CaseValueEq;
 };
 
 using Cases = std::tuple<Case<packager::Configs::Minimal, Types::Container>,
@@ -45,7 +45,7 @@ using Cases = std::tuple<Case<packager::Configs::Minimal, Types::Container>,
                          Case<packager::Configs::SimpleCrc, Types::MoreContainers>,
                          Case<packager::Configs::Full, Types::NestedWrappers>>;
 
-inline constexpr std::size_t CaseCount{std::tuple_size_v<Cases>};
+inline constexpr std::size_t caseCount{std::tuple_size_v<Cases>};
 
 // Invokes f with a Case tag, which picks the packager instantiation at compile time.
 template<typename F>
@@ -54,7 +54,7 @@ constexpr void withCase(std::size_t index,
     [&]<std::size_t... Is>(std::index_sequence<Is...>) {
         static_cast<void>(
           ((Is == index ? (f(std::tuple_element_t<Is, Cases>{}), true) : false) || ...));
-    }(std::make_index_sequence<CaseCount>{});
+    }(std::make_index_sequence<caseCount>{});
 }
 
 // Built from `value` so seeds get a fixed one and the mutator can vary it.
@@ -95,7 +95,7 @@ bool packCase(Buffer&      buffer,
 
 namespace aglio {
 template<typename SizeT>
-struct serializer<Test::fuzz::RawBody, SizeT> {
+struct TypeSerializer<Test::fuzz::RawBody, SizeT> {
     template<typename Buffer>
     static bool serialize(Test::fuzz::RawBody const& v,
                           Buffer&                    buffer) {

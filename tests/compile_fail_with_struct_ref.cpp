@@ -18,5 +18,5 @@ int main() {
     WithStructRef                   b{.value = 1, .ref = inner};
     std::vector<std::byte>          buf;
     aglio::DynamicSerializationView view{buf};
-    aglio::serializer<WithStructRef, std::uint32_t>::serialize(b, view);
+    aglio::TypeSerializer<WithStructRef, std::uint32_t>::serialize(b, view);
 }

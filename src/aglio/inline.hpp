@@ -18,7 +18,7 @@
     #define AGLIO_LIFETIMEBOUND
 #endif
 
-namespace aglio { namespace detail {
+namespace aglio { namespace Detail {
 
     /// Copies N bytes as loads and stores. The builtin on purpose: with -ffreestanding,
     /// std::memcpy stays a real call even for one byte.
@@ -32,4 +32,4 @@ namespace aglio { namespace detail {
 #endif
     }
 
-}}   // namespace aglio::detail
+}}   // namespace aglio::Detail

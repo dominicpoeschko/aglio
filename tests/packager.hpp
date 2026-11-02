@@ -14,20 +14,20 @@
 namespace Test::packager {
 
 template<typename T, typename TTuple>
-struct product_one_trait;
+struct ProductOneTrait;
 
 template<typename T, typename... Us>
-struct product_one_trait<T, std::tuple<Us...>> {
+struct ProductOneTrait<T, std::tuple<Us...>> {
     using type = std::tuple<std::tuple<T, Us>...>;
 };
 
 template<typename TTuple1, typename TTuple2>
-struct cartesian_product;
+struct CartesianProduct;
 
 template<typename... Ts, typename... Us>
-struct cartesian_product<std::tuple<Ts...>, std::tuple<Us...>> {
+struct CartesianProduct<std::tuple<Ts...>, std::tuple<Us...>> {
     using type = decltype(std::tuple_cat(
-      std::declval<typename product_one_trait<Ts, std::tuple<Us...>>::type>()...));
+      std::declval<typename ProductOneTrait<Ts, std::tuple<Us...>>::type>()...));
 };
 
 using ConfigsList = std::tuple<Configs::Minimal,
@@ -37,7 +37,7 @@ using ConfigsList = std::tuple<Configs::Minimal,
                                Configs::Full,
                                Configs::FullNoHeaderCrc>;
 
-using TestCases = typename cartesian_product<Types::List, ConfigsList>::type;
+using TestCases = typename CartesianProduct<Types::List, ConfigsList>::type;
 
 template<typename Type,
          typename Packager>
@@ -132,14 +132,14 @@ struct BareFixedBuffer {
     std::byte* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
 };
 
-static_assert(aglio::detail::fixed_capacity_v<FixedBuffer<8>>);
-static_assert(!aglio::detail::fixed_capacity_v<std::vector<std::byte>>);
-static_assert(aglio::detail::SizedOnce<FixedBuffer<8>>);
-static_assert(aglio::detail::SizedOnce<RawFixedBuffer<8>>);
-static_assert(aglio::detail::SizedOnce<BareFixedBuffer<8>>);
-static_assert(!aglio::detail::Overwritable<FixedBuffer<8>>);
-static_assert(aglio::detail::Overwritable<RawFixedBuffer<8>>);
-static_assert(!aglio::detail::SizedOnce<std::vector<std::byte>>);
+static_assert(aglio::Detail::fixedCapacityV<FixedBuffer<8>>);
+static_assert(!aglio::Detail::fixedCapacityV<std::vector<std::byte>>);
+static_assert(aglio::Detail::SizedOnce<FixedBuffer<8>>);
+static_assert(aglio::Detail::SizedOnce<RawFixedBuffer<8>>);
+static_assert(aglio::Detail::SizedOnce<BareFixedBuffer<8>>);
+static_assert(!aglio::Detail::Overwritable<FixedBuffer<8>>);
+static_assert(aglio::Detail::Overwritable<RawFixedBuffer<8>>);
+static_assert(!aglio::Detail::SizedOnce<std::vector<std::byte>>);
 
 /// Packing into a fixed buffer (serialized into one window) gives the bytes packing into a
 /// std::vector (grown per field) gives - behind bytes already in the buffer too.
@@ -201,7 +201,7 @@ struct PacketHeaderConfig {
     using Crc                                   = MyCrc;
     using Size_t                                = std::uint32_t;
     using HeaderData                            = PacketHeader;
-    static constexpr std::uint16_t PackageStart = 0xBEEF;
+    static constexpr std::uint16_t packageStart = 0xBEEF;
 };
 
 }   // namespace Test::packager
@@ -247,7 +247,7 @@ TEMPLATE_LIST_TEST_CASE("A pack that fails leaves the buffer as it was",
     }
 
     std::vector<std::byte> grown{std::byte{0xA1}, std::byte{0xB2}};
-    // Fails on MaxSize, after the header went in.
+    // Fails on maxSize, after the header went in.
     CHECK(!aglio::Packager<Test::packager::Configs::SmallMax>::pack(grown, std::uint64_t{1}));
     CHECK(std::ranges::equal(grown, std::array{std::byte{0xA1}, std::byte{0xB2}}));
 }
@@ -277,7 +277,7 @@ struct WithEmptyArray {
 
 TEST_CASE("A zero-length array field takes no bytes beyond its size, in either kind of buffer",
           "[serializer][fixed]") {
-    using Serializer = aglio::detail::Serializer<std::uint16_t>;
+    using Serializer = aglio::Detail::Serializer<std::uint16_t>;
     Test::packager::WithEmptyArray const value{.before = 0x1122, .nothing = {}, .after = 0x3344};
 
     std::vector<std::byte> want{};
@@ -315,28 +315,28 @@ struct Plain {
 
 // Writes one byte and claims to take two.
 template<typename SizeT>
-struct aglio::serializer<Test::packager::Short, SizeT> {
+struct aglio::TypeSerializer<Test::packager::Short, SizeT> {
     static bool serialize(Test::packager::Short const& v,
                           auto&                        buffer) {
-        return aglio::serializer<std::uint8_t, SizeT>::serialize(v.value, buffer);
+        return aglio::TypeSerializer<std::uint8_t, SizeT>::serialize(v.value, buffer);
     }
 
     static bool deserialize(Test::packager::Short& v,
                             auto&                  buffer) {
-        return aglio::serializer<std::uint8_t, SizeT>::deserialize(v.value, buffer);
+        return aglio::TypeSerializer<std::uint8_t, SizeT>::deserialize(v.value, buffer);
     }
 };
 
 template<typename SizeT>
-struct aglio::serialized_size<Test::packager::Short, SizeT>
+struct aglio::SerializedSize<Test::packager::Short, SizeT>
   : std::integral_constant<std::size_t, 2> {};
 
 TEST_CASE("A value of fixed serialized size takes one claim of the buffer",
           "[serializer][fixed]") {
-    using Serializer = aglio::detail::Serializer<std::uint16_t>;
+    using Serializer = aglio::Detail::Serializer<std::uint16_t>;
     using Test::packager::Plain;
-    constexpr std::size_t Size = aglio::serialized_size_v<Plain, std::uint16_t>;
-    REQUIRE(Size == 1 + 4 + (2 + 3 * 2) + 1);
+    constexpr std::size_t size = aglio::serializedSizeV<Plain, std::uint16_t>;
+    REQUIRE(size == 1 + 4 + (2 + 3 * 2) + 1);
 
     Plain const value{
       .a = 0x11,
@@ -347,18 +347,18 @@ TEST_CASE("A value of fixed serialized size takes one claim of the buffer",
 
     std::vector<std::byte> want{};
     REQUIRE(Serializer::serialize(want, value));
-    REQUIRE(want.size() == Size);
+    REQUIRE(want.size() == size);
     CHECK(want[0] == std::byte{0x11});
     CHECK(want[1] == std::byte{0x55});
     CHECK(want[4] == std::byte{0x22});
 
     // One byte short, exactly enough, and with room to spare.
-    Test::packager::RawFixedBuffer<1 + Size - 1> small{};
+    Test::packager::RawFixedBuffer<1 + size - 1> small{};
     small.used = 1;
     CHECK(!Serializer::serialize(small, value));
     CHECK(small.size() == 1);
 
-    Test::packager::FixedBuffer<1 + Size> exact{};
+    Test::packager::FixedBuffer<1 + size> exact{};
     exact.used = 1;
     exact[0]   = std::byte{0xEE};
     REQUIRE(Serializer::serialize(exact, value));
@@ -368,18 +368,18 @@ TEST_CASE("A value of fixed serialized size takes one claim of the buffer",
     Plain      out{};
     auto const ec = Serializer::deserialize(want, out);
     CHECK(!ec);
-    CHECK(ec.location == Size);
+    CHECK(ec.location == size);
     CHECK(out == value);
 
     // Fewer bytes than the value takes: refused as a whole.
-    auto cut = std::span{want}.first(Size - 1);
+    auto cut = std::span{want}.first(size - 1);
     CHECK(Serializer::deserialize(cut, out));
 }
 
-TEST_CASE("A serialized_size that is not what the serializer writes fails instead of leaving a gap",
+TEST_CASE("A SerializedSize that is not what the serializer writes fails instead of leaving a gap",
           "[serializer][fixed]") {
-    using Serializer = aglio::detail::Serializer<std::uint16_t>;
-    static_assert(aglio::serialized_size_v<Test::packager::HoldsShort, std::uint16_t> == 4);
+    using Serializer = aglio::Detail::Serializer<std::uint16_t>;
+    static_assert(aglio::serializedSizeV<Test::packager::HoldsShort, std::uint16_t> == 4);
     Test::packager::HoldsShort const value{.before = 7, .wrong = {.value = 9}};
 
     std::vector<std::byte> grown{};
@@ -397,7 +397,7 @@ TEST_CASE("A serialized_size that is not what the serializer writes fails instea
 
 TEST_CASE("Serializer into a fixed buffer too small for the value fails and writes nothing",
           "[serializer][fixed]") {
-    using Serializer = aglio::detail::Serializer<std::uint16_t>;
+    using Serializer = aglio::Detail::Serializer<std::uint16_t>;
     std::vector<std::uint32_t> const value{1, 2, 3, 4, 5, 6, 7, 8};
 
     Test::packager::FixedBuffer<64> roomy{};
@@ -550,7 +550,7 @@ TEST_CASE("HeaderData: body corruption returns partial result with header_data",
     auto result   = Packager::unpack(buffer, valueOut);
 
     REQUIRE(!result.has_value());
-    CHECK(result.error().kind == aglio::UnpackErrorKind::ParseFailure);
+    CHECK(result.error().kind == aglio::UnpackErrorKind::parseFailure);
     CHECK(result.error().headerData == infoIn);
     CHECK(result.error().consumed == buffer.size());
 }
@@ -610,7 +610,7 @@ TEST_CASE("WithDescribedHeaderData: body corruption returns partial result with 
     auto result   = Packager::unpack(buffer, valueOut);
 
     REQUIRE(!result.has_value());
-    CHECK(result.error().kind == aglio::UnpackErrorKind::ParseFailure);
+    CHECK(result.error().kind == aglio::UnpackErrorKind::parseFailure);
     CHECK(result.error().headerData.msgType == infoIn.msgType);
     CHECK(result.error().headerData.channel == infoIn.channel);
     CHECK(result.error().consumed == buffer.size());
@@ -729,7 +729,7 @@ TEST_CASE("Packager: bodySize smaller than CrcSize does not underflow",
     }
 }
 
-TEST_CASE("Packager: PackageStart byte pattern in body",
+TEST_CASE("Packager: packageStart byte pattern in body",
           "[packager]") {
     using Packager = aglio::Packager<Test::packager::Configs::Full>;
 
@@ -744,7 +744,7 @@ TEST_CASE("Packager: PackageStart byte pattern in body",
     CHECK(out == payload);
 }
 
-TEST_CASE("Packager: MaxSize exceeded rejects oversized body",
+TEST_CASE("Packager: maxSize exceeded rejects oversized body",
           "[packager]") {
     using Packager = aglio::Packager<Test::packager::Configs::SmallMax>;
 
@@ -944,7 +944,7 @@ TEST_CASE("validate: corrupted package returns nullopt",
 
     auto pkg = Packager::validate(buffer);
     CHECK(!pkg.has_value());
-    CHECK(pkg.error().kind == aglio::UnpackErrorKind::ParseFailure);
+    CHECK(pkg.error().kind == aglio::UnpackErrorKind::parseFailure);
 }
 
 TEST_CASE("validate: with described HeaderData",
@@ -980,7 +980,7 @@ struct Bounded {
     std::optional<std::uint32_t>   extra;
 };
 
-/// Every config, the small and narrow ones too: always_fits is false for some of them.
+/// Every config, the small and narrow ones too: alwaysFits is false for some of them.
 using BoundConfigsList = decltype(std::tuple_cat(std::declval<ConfigsList>(),
                                                  std::declval<std::tuple<Configs::WithHeaderData,
                                                                          Configs::SmallMax,
@@ -1003,9 +1003,9 @@ bool packWithHeader(Buffer&  buffer,
 }   // namespace Test::packager
 
 TEMPLATE_LIST_TEST_CASE(
-  "A value at its largest packs to max_packed_size, and only into a frame "
+  "A value at its largest packs to maxPackedSize, and only into a frame "
   "that holds it",
-  "[packager][max_serialized_size]",
+  "[packager][MaxSerializedSize]",
   Test::packager::BoundConfigsList) {
     using Packager = aglio::Packager<TestType>;
     using T        = Test::packager::Bounded;
@@ -1015,20 +1015,20 @@ TEMPLATE_LIST_TEST_CASE(
       .extra  = 5U
     };
 
-    static_assert(Packager::template max_packed_size<T>
-                  == Packager::FrameOverhead
-                       + aglio::max_serialized_size_v<T, typename TestType::Size_t>);
+    static_assert(Packager::template maxPackedSize<T>
+                  == Packager::frameOverhead
+                       + aglio::maxSerializedSizeV<T, typename TestType::Size_t>);
 
     std::vector<std::byte> buffer{};
     bool const             packed = Test::packager::packWithHeader<Packager, TestType>(buffer, v);
 
-    if constexpr(Packager::template always_fits<T>) {
+    if constexpr(Packager::template alwaysFits<T>) {
         static_assert(Packager::template requireAlwaysFits<T>());
         REQUIRE(packed);
-        CHECK(buffer.size() == Packager::template max_packed_size<T>);
+        CHECK(buffer.size() == Packager::template maxPackedSize<T>);
 
         // A buffer of exactly that size never refuses a T.
-        Test::packager::FixedBuffer<Packager::template max_packed_size<T>> exact{};
+        Test::packager::FixedBuffer<Packager::template maxPackedSize<T>> exact{};
         REQUIRE(Test::packager::packWithHeader<Packager, TestType>(exact, v));
         CHECK(exact.size() == exact.capacity());
     } else {
@@ -1038,12 +1038,12 @@ TEMPLATE_LIST_TEST_CASE(
 }
 
 TEST_CASE("A type without a worst case never always fits",
-          "[packager][max_serialized_size]") {
+          "[packager][MaxSerializedSize]") {
     using Packager = aglio::Packager<Test::packager::Configs::NarrowSize>;
-    static_assert(!Packager::always_fits<std::vector<std::uint8_t>>);
-    static_assert(Packager::always_fits<std::uint32_t>);
+    static_assert(!Packager::alwaysFits<std::vector<std::uint8_t>>);
+    static_assert(Packager::alwaysFits<std::uint32_t>);
     static_assert(Packager::requireAlwaysFits<std::uint32_t>());
-    static_assert(!Packager::always_fits<Test::packager::CappedVector<std::uint8_t, 1000>>,
-                  "past NarrowSize's 512-byte MaxSize");
-    static_assert(Packager::MaxFrameSize == 512);
+    static_assert(!Packager::alwaysFits<Test::packager::CappedVector<std::uint8_t, 1000>>,
+                  "past NarrowSize's 512-byte maxSize");
+    static_assert(Packager::maxFrameSize == 512);
 }

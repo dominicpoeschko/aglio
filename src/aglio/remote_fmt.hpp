@@ -14,7 +14,7 @@
 template<aglio::Described T>
 struct remote_fmt::formatter<T> {
     static consteval auto getNamedFmtString() {
-        constexpr auto  N    = glz::reflect<T>::size;
+        constexpr auto  n    = glz::reflect<T>::size;
         constexpr auto& keys = glz::reflect<T>::keys;
 
         constexpr std::size_t size = [] {
@@ -22,10 +22,10 @@ struct remote_fmt::formatter<T> {
             s += glz::type_name<T>.size();
             s += 11;   // "@TYPENAME(" and ")"
             s += 4;    // "{{" and "}}"
-            if constexpr(N != 0) {
-                s += (N - 1) * 2;   // ", "
-                s += N * 4;         // ": {}"
-                for(std::size_t i = 0; i < N; ++i) { s += keys[i].size(); }
+            if constexpr(n != 0) {
+                s += (n - 1) * 2;   // ", "
+                s += n * 4;         // ": {}"
+                for(std::size_t i = 0; i < n; ++i) { s += keys[i].size(); }
             }
             return s;
         }();
@@ -39,11 +39,11 @@ struct remote_fmt::formatter<T> {
         add(")");
         add("{{");
 
-        if constexpr(N > 0) {
-            for(std::size_t i = 0; i < N; ++i) {
+        if constexpr(n > 0) {
+            for(std::size_t i = 0; i < n; ++i) {
                 add(keys[i]);
                 add(": {}");
-                if(i < N - 1) { add(", "); }
+                if(i < n - 1) { add(", "); }
             }
         }
 
@@ -51,15 +51,15 @@ struct remote_fmt::formatter<T> {
         return buff;
     }
 
-    static constexpr auto named_fmt    = getNamedFmtString();
-    static constexpr auto named_fmt_sv = std::string_view{named_fmt.data(), named_fmt.size()};
+    static constexpr auto namedFmt   = getNamedFmtString();
+    static constexpr auto namedFmtSv = std::string_view{namedFmt.data(), namedFmt.size()};
 
     // The sub format string above with the fields' own descriptors (remote_fmt's `F`): static, so a type entry of
     // the catalog - only the field values go on the wire.
     static consteval auto text() {
         return []<std::size_t... Is>(std::index_sequence<Is...>) {
             return remote_fmt::subFormatDescriptor<glz::field_t<T, Is>...>(
-              sc::create([] { return named_fmt_sv; }));
+              sc::create([] { return namedFmtSv; }));
         }(std::make_index_sequence<glz::reflect<T>::size>{});
     }
 

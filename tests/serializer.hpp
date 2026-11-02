@@ -17,7 +17,7 @@
 #include <variant>
 #include <vector>
 
-namespace Test::serializer {
+namespace Test::TypeSerializer {
 
 template<typename SizeT,
          typename T>
@@ -25,9 +25,9 @@ bool roundTrip(T const& in,
                T&       out) {
     std::vector<std::byte>          buffer;
     aglio::DynamicSerializationView ser{buffer};
-    if(!aglio::serializer<T, SizeT>::serialize(in, ser)) { return false; }
+    if(!aglio::TypeSerializer<T, SizeT>::serialize(in, ser)) { return false; }
     aglio::DynamicDeserializationView de{buffer};
-    return aglio::serializer<T, SizeT>::deserialize(out, de);
+    return aglio::TypeSerializer<T, SizeT>::deserialize(out, de);
 }
 
 template<typename SizeT,
@@ -44,11 +44,11 @@ struct TwoFieldAggregate {
     bool         operator==(TwoFieldAggregate const&) const = default;
 };
 
-}   // namespace Test::serializer
+}   // namespace Test::TypeSerializer
 
 TEST_CASE("Serializer: empty containers round-trip",
           "[serializer]") {
-    using namespace Test::serializer;
+    using namespace Test::TypeSerializer;
     using S = std::uint32_t;
 
     CHECK(roundTripCheck<S>(std::vector<int>{}));
@@ -63,7 +63,8 @@ TEST_CASE("Serializer: range size overflow with small Size_t",
 
     std::vector<std::byte>          buffer;
     aglio::DynamicSerializationView ser{buffer};
-    bool const ok = aglio::serializer<std::vector<std::uint8_t>, std::uint8_t>::serialize(big, ser);
+    bool const                      ok
+      = aglio::TypeSerializer<std::vector<std::uint8_t>, std::uint8_t>::serialize(big, ser);
     CHECK(!ok);
 }
 
@@ -75,13 +76,13 @@ TEST_CASE("Serializer: variant out-of-bounds index",
     V const                         vIn = 42;
     std::vector<std::byte>          buffer;
     aglio::DynamicSerializationView ser{buffer};
-    REQUIRE(aglio::serializer<V, S>::serialize(vIn, ser));
+    REQUIRE(aglio::TypeSerializer<V, S>::serialize(vIn, ser));
 
     buffer[0] = std::byte{5};
 
     V                                 vOut;
     aglio::DynamicDeserializationView de{buffer};
-    CHECK(!aglio::serializer<V, S>::deserialize(vOut, de));
+    CHECK(!aglio::TypeSerializer<V, S>::deserialize(vOut, de));
 }
 
 TEST_CASE("Serializer: deserialize from truncated buffer",
@@ -91,18 +92,18 @@ TEST_CASE("Serializer: deserialize from truncated buffer",
     Types::Primitive const          pIn = Types::createDefault<Types::Primitive>();
     std::vector<std::byte>          buffer;
     aglio::DynamicSerializationView ser{buffer};
-    REQUIRE(aglio::serializer<Types::Primitive, S>::serialize(pIn, ser));
+    REQUIRE(aglio::TypeSerializer<Types::Primitive, S>::serialize(pIn, ser));
 
     buffer.resize(buffer.size() / 2);
 
     Types::Primitive                  pOut{};
     aglio::DynamicDeserializationView de{buffer};
-    CHECK(!aglio::serializer<Types::Primitive, S>::deserialize(pOut, de));
+    CHECK(!aglio::TypeSerializer<Types::Primitive, S>::deserialize(pOut, de));
 }
 
 TEST_CASE("Serializer: optional round-trip both states",
           "[serializer]") {
-    using namespace Test::serializer;
+    using namespace Test::TypeSerializer;
     using S = std::uint32_t;
 
     CHECK(roundTripCheck<S>(std::optional<int>{42}));
@@ -111,7 +112,7 @@ TEST_CASE("Serializer: optional round-trip both states",
 
 TEST_CASE("Serializer: expected round-trip both states",
           "[serializer]") {
-    using namespace Test::serializer;
+    using namespace Test::TypeSerializer;
     using S = std::uint32_t;
     using E = std::expected<int, std::string>;
 
@@ -121,7 +122,7 @@ TEST_CASE("Serializer: expected round-trip both states",
 
 TEST_CASE("Serializer: variant round-trip each alternative",
           "[serializer]") {
-    using namespace Test::serializer;
+    using namespace Test::TypeSerializer;
     using S = std::uint32_t;
     using V = std::variant<int, std::string, float>;
 
@@ -132,7 +133,7 @@ TEST_CASE("Serializer: variant round-trip each alternative",
 
 TEST_CASE("Serializer: chrono duration round-trip",
           "[serializer]") {
-    using namespace Test::serializer;
+    using namespace Test::TypeSerializer;
     using S = std::uint32_t;
 
     CHECK(roundTripCheck<S>(std::chrono::milliseconds{12345}));
@@ -141,65 +142,63 @@ TEST_CASE("Serializer: chrono duration round-trip",
 
 TEST_CASE("Serializer: nested containers with mixed optional",
           "[serializer]") {
-    using namespace Test::serializer;
+    using namespace Test::TypeSerializer;
     using S = std::uint32_t;
 
     std::vector<std::optional<int>> const v{1, std::nullopt, 3, std::nullopt, 5};
     CHECK(roundTripCheck<S>(v));
 }
 
-TEST_CASE("serialized_size_v compile-time values",
-          "[serializer][serialized_size]") {
-    using aglio::serialized_size_v;
+TEST_CASE("serializedSizeV compile-time values",
+          "[serializer][SerializedSize]") {
+    using aglio::serializedSizeV;
 
-    static_assert(serialized_size_v<std::uint8_t, std::uint32_t> == 1);
-    static_assert(serialized_size_v<std::uint16_t, std::uint32_t> == 2);
-    static_assert(serialized_size_v<std::uint32_t, std::uint32_t> == 4);
-    static_assert(serialized_size_v<std::int64_t, std::uint32_t> == 8);
-    static_assert(serialized_size_v<float, std::uint32_t> == 4);
-    static_assert(serialized_size_v<double, std::uint32_t> == 8);
-    static_assert(serialized_size_v<bool, std::uint32_t> == 1);
+    static_assert(serializedSizeV<std::uint8_t, std::uint32_t> == 1);
+    static_assert(serializedSizeV<std::uint16_t, std::uint32_t> == 2);
+    static_assert(serializedSizeV<std::uint32_t, std::uint32_t> == 4);
+    static_assert(serializedSizeV<std::int64_t, std::uint32_t> == 8);
+    static_assert(serializedSizeV<float, std::uint32_t> == 4);
+    static_assert(serializedSizeV<double, std::uint32_t> == 8);
+    static_assert(serializedSizeV<bool, std::uint32_t> == 1);
 
-    static_assert(serialized_size_v<Types::Color, std::uint32_t> == sizeof(std::uint8_t));
-    static_assert(serialized_size_v<Types::Status, std::uint32_t> == sizeof(int));
+    static_assert(serializedSizeV<Types::Color, std::uint32_t> == sizeof(std::uint8_t));
+    static_assert(serializedSizeV<Types::Status, std::uint32_t> == sizeof(int));
 
-    static_assert(serialized_size_v<std::chrono::nanoseconds, std::uint32_t>
+    static_assert(serializedSizeV<std::chrono::nanoseconds, std::uint32_t> == sizeof(std::int64_t));
+    static_assert(serializedSizeV<std::chrono::milliseconds, std::uint32_t>
                   == sizeof(std::int64_t));
-    static_assert(serialized_size_v<std::chrono::milliseconds, std::uint32_t>
-                  == sizeof(std::int64_t));
-    static_assert(serialized_size_v<std::chrono::seconds, std::uint32_t> == sizeof(std::int64_t));
-    static_assert(serialized_size_v<std::chrono::minutes, std::uint32_t> == sizeof(std::int64_t));
-    static_assert(serialized_size_v<std::chrono::hours, std::uint32_t> == sizeof(std::int64_t));
+    static_assert(serializedSizeV<std::chrono::seconds, std::uint32_t> == sizeof(std::int64_t));
+    static_assert(serializedSizeV<std::chrono::minutes, std::uint32_t> == sizeof(std::int64_t));
+    static_assert(serializedSizeV<std::chrono::hours, std::uint32_t> == sizeof(std::int64_t));
 
-    static_assert(serialized_size_v<std::pair<std::uint8_t, std::uint32_t>, std::uint32_t> == 5);
-    static_assert(serialized_size_v<std::tuple<std::uint8_t, std::uint16_t>, std::uint32_t> == 3);
+    static_assert(serializedSizeV<std::pair<std::uint8_t, std::uint32_t>, std::uint32_t> == 5);
+    static_assert(serializedSizeV<std::tuple<std::uint8_t, std::uint16_t>, std::uint32_t> == 3);
     static_assert(
-      serialized_size_v<std::tuple<std::uint8_t, std::uint16_t, std::uint32_t>, std::uint32_t>
-      == 7);
-    static_assert(serialized_size_v<std::tuple<double, double>, std::uint32_t> == 16);
-    static_assert(serialized_size_v<std::tuple<std::uint32_t>, std::uint32_t> == 4);
-    static_assert(serialized_size_v<std::pair<std::pair<std::uint8_t, std::uint8_t>, std::uint16_t>,
-                                    std::uint32_t>
+      serializedSizeV<std::tuple<std::uint8_t, std::uint16_t, std::uint32_t>, std::uint32_t> == 7);
+    static_assert(serializedSizeV<std::tuple<double, double>, std::uint32_t> == 16);
+    static_assert(serializedSizeV<std::tuple<std::uint32_t>, std::uint32_t> == 4);
+    static_assert(serializedSizeV<std::pair<std::pair<std::uint8_t, std::uint8_t>, std::uint16_t>,
+                                  std::uint32_t>
                   == 4);
 
-    static_assert(serialized_size_v<Test::serializer::TwoFieldAggregate, std::uint32_t> == 2);
-    static_assert(serialized_size_v<Types::Empty, std::uint32_t> == 0);
-    static_assert(serialized_size_v<Types::Enum, std::uint32_t>
+    static_assert(serializedSizeV<Test::TypeSerializer::TwoFieldAggregate, std::uint32_t> == 2);
+    static_assert(serializedSizeV<Types::Empty, std::uint32_t> == 0);
+    static_assert(serializedSizeV<Types::Enum, std::uint32_t>
                   == sizeof(std::uint8_t) + sizeof(int));
-    static_assert(serialized_size_v<Types::Chrono, std::uint32_t> == 5 * sizeof(std::int64_t));
-    static_assert(serialized_size_v<Types::Primitive, std::uint32_t> == 43);
+    static_assert(serializedSizeV<Types::Chrono, std::uint32_t> == 5 * sizeof(std::int64_t));
+    static_assert(serializedSizeV<Types::Primitive, std::uint32_t> == 43);
 
-    static_assert(serialized_size_v<std::array<int, 5>, std::uint32_t> == 4 + 5 * 4);
-    static_assert(serialized_size_v<std::array<std::uint8_t, 3>, std::uint32_t> == 4 + 3);
-    static_assert(serialized_size_v<std::array<int, 0>, std::uint32_t> == 4);
-    static_assert(serialized_size_v<std::array<std::array<int, 2>, 3>, std::uint32_t>
+    static_assert(serializedSizeV<std::array<int, 5>, std::uint32_t> == 4 + 5 * 4);
+    static_assert(serializedSizeV<std::array<std::uint8_t, 3>, std::uint32_t> == 4 + 3);
+    static_assert(serializedSizeV<std::array<int, 0>, std::uint32_t> == 4);
+    static_assert(serializedSizeV<std::array<std::array<int, 2>, 3>, std::uint32_t>
                   == 4 + 3 * (4 + 2 * 4));
     static_assert(aglio::HasFixedSerializedSize<std::array<int, 5>, std::uint32_t>);
     static_assert(!aglio::HasFixedSerializedSize<std::array<std::string, 2>, std::uint32_t>);
 
     static_assert(aglio::HasFixedSerializedSize<std::uint32_t, std::uint32_t>);
     static_assert(
-      aglio::HasFixedSerializedSize<Test::serializer::TwoFieldAggregate, std::uint32_t>);
+      aglio::HasFixedSerializedSize<Test::TypeSerializer::TwoFieldAggregate, std::uint32_t>);
     static_assert(aglio::HasFixedSerializedSize<Types::Empty, std::uint32_t>);
     static_assert(aglio::HasFixedSerializedSize<Types::Primitive, std::uint32_t>);
     static_assert(aglio::HasFixedSerializedSize<Types::Chrono, std::uint32_t>);
@@ -219,10 +218,10 @@ TEST_CASE("serialized_size_v compile-time values",
     static_assert(!aglio::HasFixedSerializedSize<std::pair<int, std::string>, std::uint32_t>);
     static_assert(!aglio::HasFixedSerializedSize<std::tuple<int, std::vector<int>>, std::uint32_t>);
 
-    static_assert(serialized_size_v<std::uint32_t, std::uint8_t> == 4);
-    static_assert(serialized_size_v<std::uint32_t, std::uint16_t> == 4);
-    static_assert(serialized_size_v<Types::Primitive, std::uint8_t> == 43);
-    static_assert(serialized_size_v<Types::Primitive, std::uint16_t> == 43);
+    static_assert(serializedSizeV<std::uint32_t, std::uint8_t> == 4);
+    static_assert(serializedSizeV<std::uint32_t, std::uint16_t> == 4);
+    static_assert(serializedSizeV<Types::Primitive, std::uint8_t> == 43);
+    static_assert(serializedSizeV<Types::Primitive, std::uint16_t> == 43);
 
     CHECK(true);
 }
@@ -232,25 +231,25 @@ TEST_CASE("booleans are serialized to 0 or 1",
     std::vector<std::byte>          buffer;
     aglio::DynamicSerializationView view{buffer};
 
-    REQUIRE(aglio::serializer<bool, std::uint32_t>::serialize(true, view));
+    REQUIRE(aglio::TypeSerializer<bool, std::uint32_t>::serialize(true, view));
     REQUIRE(!buffer.empty());
     CHECK(buffer[0] == std::byte{1});
 
-    REQUIRE(aglio::serializer<bool, std::uint32_t>::serialize(false, view));
+    REQUIRE(aglio::TypeSerializer<bool, std::uint32_t>::serialize(false, view));
     REQUIRE(!buffer.empty());
     CHECK(buffer[1] == std::byte{0});
 }
 
-TEST_CASE("serialized_size_v matches actual serialized byte count",
-          "[serializer][serialized_size]") {
+TEST_CASE("serializedSizeV matches actual serialized byte count",
+          "[serializer][SerializedSize]") {
     auto const check = [](auto const& value) {
         using T = std::remove_cvref_t<decltype(value)>;
         using S = std::uint32_t;
 
         std::vector<std::byte>          buffer;
         aglio::DynamicSerializationView ser{buffer};
-        REQUIRE(aglio::serializer<T, S>::serialize(value, ser));
-        CHECK(buffer.size() == aglio::serialized_size_v<T, S>);
+        REQUIRE(aglio::TypeSerializer<T, S>::serialize(value, ser));
+        CHECK(buffer.size() == aglio::serializedSizeV<T, S>);
     };
 
     SECTION("trivial") {
@@ -261,8 +260,8 @@ TEST_CASE("serialized_size_v matches actual serialized byte count",
     }
 
     SECTION("enum") {
-        check(Types::Color::Blue);
-        check(Types::Active);
+        check(Types::Color::blue);
+        check(Types::active);
     }
 
     SECTION("chrono") {
@@ -286,7 +285,7 @@ TEST_CASE("serialized_size_v matches actual serialized byte count",
         check(Types::createDefault<Types::Chrono>());
         check(Types::createDefault<Types::Enum>());
         check(Types::createDefault<Types::Empty>());
-        check(Test::serializer::TwoFieldAggregate{.a = 7, .b = 3});
+        check(Test::TypeSerializer::TwoFieldAggregate{.a = 7, .b = 3});
     }
 }
 
@@ -298,14 +297,14 @@ TEST_CASE("Serializer: stream views round-trip",
 
     std::ostringstream             oss;
     aglio::StreamSerializationView sser{oss};
-    REQUIRE(aglio::serializer<Types::Primitive, S>::serialize(pIn, sser));
+    REQUIRE(aglio::TypeSerializer<Types::Primitive, S>::serialize(pIn, sser));
 
     std::string const                data = oss.str();
     std::istringstream               iss(data);
     aglio::StreamDeserializationView sde{iss};
 
     Types::Primitive pOut{};
-    REQUIRE(aglio::serializer<Types::Primitive, S>::deserialize(pOut, sde));
+    REQUIRE(aglio::TypeSerializer<Types::Primitive, S>::deserialize(pOut, sde));
     CHECK(pIn == pOut);
 }
 
@@ -317,10 +316,10 @@ TEST_CASE("Serializer: stream deserialization truncated",
     aglio::StreamDeserializationView sde{iss};
 
     Types::Primitive pOut{};
-    CHECK(!aglio::serializer<Types::Primitive, S>::deserialize(pOut, sde));
+    CHECK(!aglio::TypeSerializer<Types::Primitive, S>::deserialize(pOut, sde));
 }
 
-namespace Test::serializer {
+namespace Test::TypeSerializer {
 
 /// A vector with its bound in its type, like a static vector: capacity() is static.
 template<typename T, std::size_t N>
@@ -359,51 +358,51 @@ public:
     [[nodiscard]] constexpr std::uint32_t value() const { return v_; }
 };
 
-}   // namespace Test::serializer
+}   // namespace Test::TypeSerializer
 
 template<typename SizeT>
-struct aglio::serializer<Test::serializer::Squeezed, SizeT> {
-    static constexpr std::size_t max_serialized_size = 1;
+struct aglio::TypeSerializer<Test::TypeSerializer::Squeezed, SizeT> {
+    static constexpr std::size_t maxSerializedSize = 1;
 };
 
-TEST_CASE("max_serialized_size_v compile-time values",
-          "[serializer][max_serialized_size]") {
+TEST_CASE("maxSerializedSizeV compile-time values",
+          "[serializer][MaxSerializedSize]") {
     using aglio::HasMaxSerializedSize;
-    using aglio::max_serialized_size_v;
-    using Test::serializer::Capped;
-    using Test::serializer::CappedMap;
+    using aglio::maxSerializedSizeV;
+    using Test::TypeSerializer::Capped;
+    using Test::TypeSerializer::CappedMap;
     using S = std::uint16_t;
 
     // A fixed size is its own worst case.
-    static_assert(max_serialized_size_v<std::uint32_t, S> == 4);
-    static_assert(max_serialized_size_v<bool, S> == 1);
-    static_assert(max_serialized_size_v<Types::Primitive, S>
-                  == aglio::serialized_size_v<Types::Primitive, S>);
-    static_assert(max_serialized_size_v<std::array<int, 5>, S> == 2 + 5 * 4);
+    static_assert(maxSerializedSizeV<std::uint32_t, S> == 4);
+    static_assert(maxSerializedSizeV<bool, S> == 1);
+    static_assert(maxSerializedSizeV<Types::Primitive, S>
+                  == aglio::serializedSizeV<Types::Primitive, S>);
+    static_assert(maxSerializedSizeV<std::array<int, 5>, S> == 2 + 5 * 4);
 
     // Engaged, failed or the largest alternative: flag or index, then the value.
-    static_assert(max_serialized_size_v<std::optional<std::uint32_t>, S> == 1 + 4);
-    static_assert(max_serialized_size_v<std::expected<std::uint32_t, std::uint8_t>, S> == 1 + 4);
-    static_assert(max_serialized_size_v<std::expected<std::uint8_t, std::uint64_t>, S> == 1 + 8);
-    static_assert(max_serialized_size_v<std::expected<void, std::uint16_t>, S> == 1 + 2);
-    static_assert(max_serialized_size_v<std::variant<std::uint8_t, double, bool>, S> == 1 + 8);
-    static_assert(max_serialized_size_v<std::chrono::milliseconds, S> == 8);
-    static_assert(max_serialized_size_v<std::tuple<std::uint8_t, std::optional<std::uint16_t>>, S>
+    static_assert(maxSerializedSizeV<std::optional<std::uint32_t>, S> == 1 + 4);
+    static_assert(maxSerializedSizeV<std::expected<std::uint32_t, std::uint8_t>, S> == 1 + 4);
+    static_assert(maxSerializedSizeV<std::expected<std::uint8_t, std::uint64_t>, S> == 1 + 8);
+    static_assert(maxSerializedSizeV<std::expected<void, std::uint16_t>, S> == 1 + 2);
+    static_assert(maxSerializedSizeV<std::variant<std::uint8_t, double, bool>, S> == 1 + 8);
+    static_assert(maxSerializedSizeV<std::chrono::milliseconds, S> == 8);
+    static_assert(maxSerializedSizeV<std::tuple<std::uint8_t, std::optional<std::uint16_t>>, S>
                   == 1 + 1 + 2);
 
     // A static capacity bounds a range: size field, then that many elements at their largest.
-    static_assert(max_serialized_size_v<Capped<std::uint32_t, 3>, S> == 2 + 3 * 4);
-    static_assert(max_serialized_size_v<Capped<std::optional<std::uint8_t>, 2>, S> == 2 + 2 * 2);
-    static_assert(max_serialized_size_v<CappedMap<std::uint8_t, std::uint32_t, 4>, S> == 2 + 4 * 5);
-    static_assert(max_serialized_size_v<Test::serializer::WithCapped, S>
+    static_assert(maxSerializedSizeV<Capped<std::uint32_t, 3>, S> == 2 + 3 * 4);
+    static_assert(maxSerializedSizeV<Capped<std::optional<std::uint8_t>, 2>, S> == 2 + 2 * 2);
+    static_assert(maxSerializedSizeV<CappedMap<std::uint8_t, std::uint32_t, 4>, S> == 2 + 4 * 5);
+    static_assert(maxSerializedSizeV<Test::TypeSerializer::WithCapped, S>
                   == 2 + (2 + 3 * 4) + (1 + 1) + (1 + 8));
     // ...but never past what the size field can count.
-    static_assert(max_serialized_size_v<Capped<std::uint8_t, 1000>, std::uint8_t> == 1 + 255);
-    static_assert(max_serialized_size_v<Capped<std::vector<int>, 0>, S> == 2);
+    static_assert(maxSerializedSizeV<Capped<std::uint8_t, 1000>, std::uint8_t> == 1 + 255);
+    static_assert(maxSerializedSizeV<Capped<std::vector<int>, 0>, S> == 2);
 
     // A serializer's own bound wins over the shape.
-    static_assert(max_serialized_size_v<Test::serializer::Squeezed, S> == 1);
-    static_assert(max_serialized_size_v<Capped<Test::serializer::Squeezed, 3>, S> == 2 + 3);
+    static_assert(maxSerializedSizeV<Test::TypeSerializer::Squeezed, S> == 1);
+    static_assert(maxSerializedSizeV<Capped<Test::TypeSerializer::Squeezed, 3>, S> == 2 + 3);
 
     // Nothing bounds a std::vector, std::string or std::map, nor what holds one.
     static_assert(!HasMaxSerializedSize<std::vector<int>, S>);
@@ -411,7 +410,7 @@ TEST_CASE("max_serialized_size_v compile-time values",
     static_assert(!HasMaxSerializedSize<std::map<int, int>, S>);
     static_assert(!HasMaxSerializedSize<std::optional<std::vector<int>>, S>);
     static_assert(!HasMaxSerializedSize<std::variant<std::uint8_t, std::string>, S>);
-    static_assert(!HasMaxSerializedSize<Test::serializer::WithVector, S>);
+    static_assert(!HasMaxSerializedSize<Test::TypeSerializer::WithVector, S>);
     static_assert(!HasMaxSerializedSize<Capped<std::vector<int>, 2>, S>);
     static_assert(HasMaxSerializedSize<std::uint8_t, S>);
 
@@ -423,10 +422,10 @@ TEST_CASE("max_serialized_size_v compile-time values",
                   std::uint64_t>);
 }
 
-TEST_CASE("A value at its largest serializes to max_serialized_size_v",
-          "[serializer][max_serialized_size]") {
+TEST_CASE("A value at its largest serializes to maxSerializedSizeV",
+          "[serializer][MaxSerializedSize]") {
     using S = std::uint16_t;
-    Test::serializer::WithCapped const v{
+    Test::TypeSerializer::WithCapped const v{
       .id     = 7,
       .values = {1, 2, 3},
       .flag   = std::uint8_t{4},
@@ -435,6 +434,6 @@ TEST_CASE("A value at its largest serializes to max_serialized_size_v",
 
     std::vector<std::byte>          buffer;
     aglio::DynamicSerializationView ser{buffer};
-    REQUIRE(aglio::serializer<Test::serializer::WithCapped, S>::serialize(v, ser));
-    CHECK(buffer.size() == aglio::max_serialized_size_v<Test::serializer::WithCapped, S>);
+    REQUIRE(aglio::TypeSerializer<Test::TypeSerializer::WithCapped, S>::serialize(v, ser));
+    CHECK(buffer.size() == aglio::maxSerializedSizeV<Test::TypeSerializer::WithCapped, S>);
 }

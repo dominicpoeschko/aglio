@@ -11,19 +11,19 @@
 
 namespace Test {
 
-enum class Api : std::uint8_t { Format, Fmt, Ostream, RemoteFmt };
+enum class Api : std::uint8_t { format, fmt, ostream, remoteFmt };
 
 // Assertion-free so the Catch2 suite and the standalone one in tests/remote_fmt share the goldens.
 template<typename T,
          Api Api>
 std::string expectedFormat() {
-    if constexpr(Api == Api::RemoteFmt) {
+    if constexpr(Api == Api::remoteFmt) {
         // remote_fmt renders identically to fmt, prefixed per described type with the qualified name.
         // Derived, not spelled out, so a glz::type_name change would move both sides at once -
         // remote_fmt_tests.cpp keeps one literal golden as the anchor against that.
-        return "@TYPENAME(" + std::string{glz::type_name<T>} + ")" + expectedFormat<T, Api::Fmt>();
+        return "@TYPENAME(" + std::string{glz::type_name<T>} + ")" + expectedFormat<T, Api::fmt>();
     } else if constexpr(std::is_same_v<T, Types::Primitive>) {
-        if constexpr(Api == Api::Ostream) {
+        if constexpr(Api == Api::ostream) {
             std::string       expected = R"({i8: )";
             std::stringstream ss;
             ss << static_cast<char>(-42);   // what operator<< makes of an int8_t: a character
@@ -42,7 +42,7 @@ std::string expectedFormat() {
         return R"({optSome: optional(42), optNone: none, var: variant("variant_string"), tup: (100, 3.14, "tuple_str"), pr: (200, "pair_str"), expVal: expected(99), expErr: unexpected("error_msg")})";
     } else if constexpr(std::is_same_v<T, Types::WrapperNoFloat>) {
         // std::format and fmt debug-format a nested char ('c'); operator<< writes it raw.
-        if constexpr(Api == Api::Ostream) {
+        if constexpr(Api == Api::ostream) {
             return R"({optSome: optional(42), optNone: none, var: variant("variant_string"), tup: (100, c, "tuple_str"), pr: (200, "pair_str"), expVal: expected(99), expErr: unexpected("error_msg")})";
         } else {
             return R"({optSome: optional(42), optNone: none, var: variant("variant_string"), tup: (100, 'c', "tuple_str"), pr: (200, "pair_str"), expVal: expected(99), expErr: unexpected("error_msg")})";
@@ -50,7 +50,7 @@ std::string expectedFormat() {
     } else if constexpr(std::is_same_v<T, Types::ExpectedVoid>) {
         return R"({ok: expected(), err: unexpected("error_msg")})";
     } else if constexpr(std::is_same_v<T, Types::MoreContainers>) {
-        if constexpr(Api == Api::Ostream) {
+        if constexpr(Api == Api::ostream) {
             // operator<< prints [] only for vector and array, {} for other ranges, and uint8_t as a
             // character.
             return R"({deq: {1, 2, 3}, lst: {4, 5}, strSet: {"alpha", "beta"}, strArr: ["one", "two"], bytes: [A, B], flags: [true, false, true]})";
@@ -62,7 +62,7 @@ std::string expectedFormat() {
     } else if constexpr(std::is_same_v<T, Types::NestedWrappers>) {
         return R"({optOpt: optional(optional(7)), optOfEmpty: optional(none), optPair: optional((1, "x")), varVec: variant([1, 2])})";
     } else if constexpr(std::is_same_v<T, Types::Escapes>) {
-        if constexpr(Api == Api::Ostream) {
+        if constexpr(Api == Api::ostream) {
             // operator<< quotes a nested string without escaping its contents.
             return R"({plain: a"b\c, nested: ["a"b", "c\d"]})";
         } else {
@@ -76,19 +76,19 @@ std::string expectedFormat() {
         return R"({nestedVec: [[1, 2, 3], [4, 5], [6, 7, 8, 9]], optVec: optional(["opt1", "opt2", "opt3"]), mapOfVecs: {"key1": [1, 2, 3], "key2": [4, 5]}, vecOfPairs: [(1, "first"), (2, "second"), (3, "third")]})";
     } else if constexpr(std::is_same_v<T, Types::Enum>) {
         // Names, not integers, via enchantum - which is what Api::RemoteFmt always did.
-        return R"({color: Blue, status: Active})";
+        return R"({color: blue, status: active})";
     } else if constexpr(std::is_same_v<T, Types::EnumUnknown>) {
         // No enumerator matches, so the number is printed.
         return R"({unknown: 7, outOfRange: 200})";
     } else if constexpr(std::is_same_v<T, Types::Empty>) {
         return R"({})";
     } else if constexpr(std::is_same_v<T, Types::ContiguousAssociative>) {
-        if constexpr(Api == Api::Ostream) {
+        if constexpr(Api == Api::ostream) {
             // enchantum's formatters derive from formatter<string_view>, so a nested name picks up
             // debug quoting; operator<< has no such notion.
-            return R"({cset: {Red, Blue}})";
+            return R"({cset: {red, blue}})";
         } else {
-            return R"({cset: {"Red", "Blue"}})";
+            return R"({cset: {"red", "blue"}})";
         }
     } else {
         // Fallback for unhandled types, will cause a test failure
