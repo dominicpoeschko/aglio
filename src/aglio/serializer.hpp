@@ -362,7 +362,16 @@ struct TypeSerializer<std::variant<Ts...>, SizeT> {
         static_assert(std::numeric_limits<Index_t>::max() >= n, "variant too big");
         Index_t const index = static_cast<Index_t>(v.index());
         if(!TypeSerializer<Index_t, SizeT>::serialize(index, buffer)) { return false; }
-        return std::visit([&](auto const& vv) { return serializeAlternative(vv, buffer); }, v);
+        // a fold over the alternatives, not std::visit: each a direct call (libc++'s visit dispatches through a
+        // table of function pointers, which a static call graph - Kvasir's stack bound - cannot follow)
+        return [&]<std::size_t... I>(std::index_sequence<I...>) {
+            bool ok = false;
+            static_cast<void>(
+              ((v.index() == I ? (ok = serializeAlternative(*std::get_if<I>(&v), buffer), true)
+                               : false)
+               || ...));
+            return ok;
+        }(std::index_sequence_for<Ts...>{});
     }
 
     template<typename Buffer>
