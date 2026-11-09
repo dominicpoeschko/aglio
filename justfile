@@ -33,23 +33,30 @@ configs := "gcc gcc-asan clang clang-asan"
 
 default: test
 
-# Print the compilers and cmake flags for a configuration (see the CI matrix)
+# Print the compilers and cmake flags for a configuration (the CI matrix): gcc and clang are CI's ship entries
+# (cmake_helpers' Release: NDEBUG, LTO), the sanitizer configurations and the fuzz and remote-fmt trees Release with
+# their asserts and without LTO. Every option a configuration differs in is spelled out, so `configure` can switch an
+# older tree to it in place.
 [private]
 flags config:
     #!/usr/bin/env bash
     set -euo pipefail
+    ship="-DUSE_NDEBUG=ON -DUSE_LTO=ON -DUSE_NATIVE_FLAG=OFF -DUSE_SANITIZER=none -DUSE_STDLIB_DEBUG=false"
+    asserts="-DUSE_NDEBUG=OFF -DUSE_LTO=OFF -DCMAKE_CXX_FLAGS_RELEASE=-O3 -DUSE_NATIVE_FLAG=OFF"
     # USE_FORCE_FETCH under libc++: Catch2 and fmt must be BUILT here rather than
     # found, or the link mixes them. CI never hits this - its container has no
     # system Catch2 to find - but a developer machine does, and the failure is a
     # wall of undefined std::__ostream_insert / std::_Rb_tree_increment symbols
     # from libstdc++-compiled archives.
     case "{{ config }}" in
-        gcc)        echo "gcc g++ " ;;
-        gcc-asan)   echo "gcc g++ -DUSE_SANITIZER=address -DUSE_STDLIB_DEBUG=true" ;;
-        clang)      echo "clang clang++ " ;;
-        clang-asan) echo "clang clang++ -DUSE_STD_LIB=libc++ -DUSE_SANITIZER=address -DUSE_STDLIB_DEBUG=true -DUSE_FORCE_FETCH=ON" ;;
+        gcc)        echo "gcc g++ $ship" ;;
+        gcc-asan)   echo "gcc g++ $asserts -DUSE_SANITIZER=address -DUSE_STDLIB_DEBUG=true" ;;
+        clang)      echo "clang clang++ $ship" ;;
+        clang-asan) echo "clang clang++ $asserts -DUSE_STD_LIB=libc++ -DUSE_SANITIZER=address -DUSE_STDLIB_DEBUG=true -DUSE_FORCE_FETCH=ON" ;;
+        # CI's fuzz and remote-fmt jobs (the fuzz target brings its own -fsanitize flags)
+        fuzz|remote-fmt) echo "clang clang++ $asserts -DUSE_SANITIZER=none -DUSE_STDLIB_DEBUG=false" ;;
         *)
-            echo "unknown config '{{ config }}'; known: {{ configs }}" >&2
+            echo "unknown config '{{ config }}'; known: {{ configs }} fuzz remote-fmt" >&2
             exit 1 ;;
     esac
 
@@ -75,17 +82,30 @@ guard dir src:
         rm -rf "{{ dir }}"
     fi
 
-# Configure build/<config> if it does not exist yet (no-op afterwards)
+# Configure build/<config> (a CI configuration, or `fuzz`) if it does not exist yet. Warnings are errors and the build
+# is optimised (Release), with the options of its CI entry (`flags`): a tree configured with other values gets them in
+# place, once. Debug left the fetched libraries without default build options (Catch2, fmt) at -O0 - cmake_helpers
+# clears CMAKE_CXX_FLAGS_<CONFIG>.
 configure config=default_config: (guard (build_root / config) (root / "tests"))
     #!/usr/bin/env bash
     set -euo pipefail
     dir="{{ build_root }}/{{ config }}"
-    if [ -f "$dir/build.ninja" ]; then exit 0; fi
     read -r cc cxx rest < <(just --justfile "{{ self }}" flags "{{ config }}")
+    if [ -f "$dir/build.ninja" ]; then
+        stale=()
+        for opt in -DUSE_WARNINGS_AS_ERRORS=ON -DCMAKE_BUILD_TYPE=Release $rest; do
+            kv=${opt#-D}
+            grep -q -x -F -e "${kv%%=*}:BOOL=${kv#*=}" -e "${kv%%=*}:STRING=${kv#*=}" "$dir/CMakeCache.txt" \
+                || stale+=("$opt")
+        done
+        # -S: without it cmake takes the working directory (this repository's root, its own CMakeLists.txt) as the source
+        [ ${#stale[@]} -eq 0 ] || cmake -S "{{ root }}/tests" -B "$dir" "${stale[@]}" > /dev/null
+        exit 0
+    fi
     launcher=""
     command -v ccache >/dev/null && launcher="-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
     env CC="$cc" CXX="$cxx" cmake -S "{{ root }}/tests" -B "$dir" -G Ninja \
-        -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DUSE_WARNINGS_AS_ERRORS=ON \
         $launcher $rest
 
 # Wipe build/<config> and configure it again
@@ -132,17 +152,10 @@ test-all filter="":
     fi
     echo "all configurations passed"
 
-# Build the packager fuzzer and its generated seed corpus in build/fuzz (clang only).
-fuzz-build:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dir="{{ build_root }}/fuzz"
-    just --justfile "{{ self }}" guard "$dir" "{{ root }}/tests"
-    if [ ! -f "$dir/build.ninja" ]; then
-        env CC=clang CXX=clang++ cmake -S "{{ root }}/tests" -B "$dir" -G Ninja
-    fi
-    cmake --build "$dir" -j{{ jobs }} --target fuzz_packager fuzz_corpus_generator
-    "$dir/fuzz_corpus_generator" "$dir/corpus"
+# Build the packager fuzzer and its generated seed corpus in build/fuzz (clang only, as CI's fuzz jobs).
+fuzz-build: (configure "fuzz")
+    cmake --build "{{ build_root }}/fuzz" -j{{ jobs }} --target fuzz_packager fuzz_corpus_generator
+    "{{ build_root }}/fuzz/fuzz_corpus_generator" "{{ build_root }}/fuzz/corpus"
 
 # Run every corpus and regression input once - deterministic, CI's blocking fuzz job.
 fuzz-replay: fuzz-build
@@ -161,15 +174,16 @@ remote-fmt: configure-remote-fmt
     cmake --build "{{ build_root }}/remote-fmt" -j{{ jobs }}
     ctest --test-dir "{{ build_root }}/remote-fmt" --output-on-failure -j{{ jobs }}
 
-# Configure build/remote-fmt (clang, with a compile database for tidy-remote-fmt)
+# Configure build/remote-fmt (clang, with a compile database for tidy-remote-fmt), every time: with all of CI's options
 [private]
 configure-remote-fmt:
     #!/usr/bin/env bash
     set -euo pipefail
     dir="{{ build_root }}/remote-fmt"
     just --justfile "{{ self }}" guard "$dir" "{{ root }}/tests/remote_fmt"
-    env CC=clang CXX=clang++ cmake -S "{{ root }}/tests/remote_fmt" -B "$dir" -G Ninja \
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    read -r cc cxx rest < <(just --justfile "{{ self }}" flags remote-fmt)
+    env CC="$cc" CXX="$cxx" cmake -S "{{ root }}/tests/remote_fmt" -B "$dir" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DUSE_WARNINGS_AS_ERRORS=ON $rest
 
 # A broken export set or an unshipped header shows up here and nowhere else.
 # Consume aglio as a user does: install it, then find_package it. ENCHANTUM ON/OFF.

@@ -5,6 +5,10 @@
 
 #include <algorithm>
 #include <chrono>
+#ifdef AGLIO_USE_MP_UNITS
+    // macro-gated, not __has_include: a build that asks for quantities and lacks mp-units has to fail
+    #include <mp-units/framework.h>
+#endif
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -422,6 +426,31 @@ struct TypeSerializer<std::chrono::duration<Rep, Period>, SizeT> {
     }
 };
 
+#ifdef AGLIO_USE_MP_UNITS
+/// An mp-units quantity travels as its number in its own unit, as a duration as its count: the unit is in the type
+/// at both ends (a receiver naming another unit reads another number - name the same type). Built back with the
+/// (number, reference) constructor, which takes offset units (degree_Celsius) as well.
+template<auto R, typename Rep, typename SizeT>
+struct TypeSerializer<mp_units::quantity<R, Rep>, SizeT> {
+    template<typename Buffer>
+    AGLIO_INLINE static constexpr bool serialize(mp_units::quantity<R,
+                                                                    Rep> const& v,
+                                                 Buffer&                        buffer) {
+        return TypeSerializer<Rep, SizeT>::serialize(v.numerical_value_in(v.unit), buffer);
+    }
+
+    template<typename Buffer>
+    AGLIO_INLINE static constexpr bool deserialize(mp_units::quantity<R,
+                                                                      Rep>& v,
+                                                   Buffer&                  buffer) {
+        Rep vv;
+        if(!TypeSerializer<Rep, SizeT>::deserialize(vv, buffer)) { return false; }
+        v = mp_units::quantity<R, Rep>{vv, R};
+        return true;
+    }
+};
+#endif
+
 template<Detail::IsTupleLikeButNotRange T, typename SizeT>
 struct TypeSerializer<T, SizeT> {
     template<typename Buffer>
@@ -575,6 +604,12 @@ template<typename Rep, typename Period, typename SizeT>
     requires HasFixedSerializedSize<Rep, SizeT>
 struct SerializedSize<std::chrono::duration<Rep, Period>, SizeT> : SerializedSize<Rep, SizeT> {};
 
+#ifdef AGLIO_USE_MP_UNITS
+template<auto R, typename Rep, typename SizeT>
+    requires HasFixedSerializedSize<Rep, SizeT>
+struct SerializedSize<mp_units::quantity<R, Rep>, SizeT> : SerializedSize<Rep, SizeT> {};
+#endif
+
 namespace Detail {
 
     template<typename T,
@@ -649,7 +684,8 @@ inline constexpr std::size_t serializedSizeV = SerializedSize<T, SizeT>::value;
 ///  - a fixed SerializedSize is its own bound;
 ///  - optional / expected: the flag and the larger side (expected<void, E>: flag + E);
 ///  - variant: the index (one byte, or Size_t past 255 alternatives) and the largest alternative;
-///  - duration: its rep; tuple-likes and described structs: the sum of their members;
+///  - duration and (AGLIO_USE_MP_UNITS) mp-units quantity: its rep; tuple-likes and described structs: the sum of
+///    their members;
 ///  - a range: the Size_t count and capacity x its largest element, where the capacity is known
 ///    from the type alone - a static `capacity()` (a static vector, string, map or set) or a tuple
 ///    size (std::array). The count stops at what Size_t can hold: the serializer refuses more.
@@ -703,6 +739,13 @@ namespace Detail {
     inline constexpr bool isDurationV = false;
     template<typename Rep, typename Period>
     inline constexpr bool isDurationV<std::chrono::duration<Rep, Period>> = true;
+
+    template<typename T>
+    inline constexpr bool isQuantityV = false;
+#ifdef AGLIO_USE_MP_UNITS
+    template<auto R, typename Rep>
+    inline constexpr bool isQuantityV<mp_units::quantity<R, Rep>> = true;
+#endif
 
     /// What the range serializer writes per element: a map's pair without the const key.
     template<typename T>
@@ -809,7 +852,7 @@ namespace Detail {
                   sizeof(Index_t),
                   largestOf(maxSizeOf<std::variant_alternative_t<Is, T>, SizeT>()...));
             }(std::make_index_sequence<n>{});
-        } else if constexpr(isDurationV<T>) {
+        } else if constexpr(isDurationV<T> || isQuantityV<T>) {
             return maxSizeOf<typename T::rep, SizeT>();
         } else if constexpr(IsTupleLikeButNotRange<T>) {
             return tupleMaxSize<T, SizeT>();

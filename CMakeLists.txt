@@ -35,7 +35,7 @@ if(NOT TARGET glaze_glaze)
     endif()
 endif()
 
-project(aglio VERSION 0.3.3)
+project(aglio VERSION 0.3.4)
 
 # Before the target: its INSTALL_INTERFACE include directory is CMAKE_INSTALL_INCLUDEDIR, empty until this runs. With it
 # later, the exported target carried no include directory, and an installed aglio only worked from a prefix the compiler
@@ -49,15 +49,44 @@ target_include_directories(aglio INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOU
 target_link_libraries(aglio INTERFACE glaze::glaze)
 add_library(aglio::aglio ALIAS aglio)
 
+# On serializes mp-units quantities (as their number in their own unit; serializer.hpp) and brings mp-units: the
+# parent's mp-units target if it has one, else v2.5.0 fetched. Off: no mp-units anywhere.
+option(AGLIO_USE_MP_UNITS "Serialize mp-units quantities" OFF)
+
+if(AGLIO_USE_MP_UNITS)
+    if(NOT TARGET mp-units::core)
+        include(FetchContent)
+        # hosted defaults, no contract library (gsl-lite) and no C++ modules: the headers are all aglio needs
+        set(MP_UNITS_API_CONTRACTS
+            "NONE"
+            CACHE STRING "")
+        set(MP_UNITS_BUILD_CXX_MODULES
+            OFF
+            CACHE BOOL "")
+        set(MP_UNITS_BUILD_INSTALL
+            OFF
+            CACHE BOOL "")
+        FetchContent_Declare(
+            mp-units
+            GIT_REPOSITORY https://github.com/mpusz/mp-units.git
+            GIT_TAG v2.5.0
+            GIT_SHALLOW ON
+            SYSTEM SOURCE_SUBDIR src)
+        FetchContent_MakeAvailable(mp-units)
+    endif()
+    target_link_libraries(aglio INTERFACE mp-units::core)
+    target_compile_definitions(aglio INTERFACE AGLIO_USE_MP_UNITS)
+endif()
+
 # Off drops the dependency, at the cost of enums not printing at all. Also turn it off if you define your own enum
 # formatters: enchantum's match every enum, so a second one for the same type is ambiguous.
 option(AGLIO_USE_ENCHANTUM "Print enums by name in the fmt, std::format and ostream output" ON)
 
 if(AGLIO_USE_ENCHANTUM)
-    # Located by header, not by find_package: enchantum 0.4.0 installs its config into <prefix>/cmake but its targets
-    # file into <prefix>/share/enchantum/cmake, and the config includes the latter from its own directory - so config
-    # mode is a hard error rather than a miss whenever an installed copy is present. aglioConfig.cmake.in does the same
-    # for consumers. A parent project that already provides the target wins over both.
+    # Located by header, not by find_package: enchantum is header-only, its include directory is all aglio needs, and an
+    # installed copy's CMake package is never read (before 0.5.0 it put its config and its targets file in two
+    # directories, and config mode was a hard error). aglioConfig.cmake.in does the same for consumers. A parent project
+    # that already provides the target wins over both.
     if(NOT TARGET enchantum::enchantum)
         # Skipped under USE_FORCE_FETCH for the same reason as the glaze probe above.
         if(NOT USE_FORCE_FETCH)
@@ -72,7 +101,7 @@ if(AGLIO_USE_ENCHANTUM)
             FetchContent_Declare(
                 enchantum
                 GIT_REPOSITORY https://github.com/ZXShady/enchantum
-                GIT_TAG 0.4.0
+                GIT_TAG 0.5.0
                 SYSTEM)
 
             FetchContent_MakeAvailable(enchantum)

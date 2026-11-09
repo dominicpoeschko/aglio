@@ -8,10 +8,9 @@ include("${CMAKE_CURRENT_LIST_DIR}/aglioTargets.cmake")
 set(AGLIO_USE_ENCHANTUM @AGLIO_USE_ENCHANTUM@)
 
 if(AGLIO_USE_ENCHANTUM)
-    # Located by header rather than by find_package: enchantum 0.4.0 installs its config into
-    # <prefix>/cmake but its targets file into <prefix>/share/enchantum/cmake, and the config includes
-    # the latter from its own directory - so config mode is a hard error rather than a miss. It is
-    # header-only, so the include directory is all the installed aglio needs.
+    # Located by header rather than by find_package: enchantum is header-only, so the include
+    # directory is all the installed aglio needs, and an installed copy's CMake package is never read
+    # (before 0.5.0 it put its config and its targets file in two directories: config mode failed).
     find_path(aglio_enchantum_include_dir enchantum/enchantum.hpp)
     mark_as_advanced(aglio_enchantum_include_dir)
 

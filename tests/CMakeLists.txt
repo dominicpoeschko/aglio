@@ -17,7 +17,7 @@ find_or_fetch_package(
     GIT_REPOSITORY
     https://github.com/catchorg/Catch2.git
     GIT_TAG
-    v3.15.1
+    v3.16.1
     GIT_BRANCH
     devel)
 
@@ -26,7 +26,7 @@ find_or_fetch_package(
     GIT_REPOSITORY
     https://github.com/fmtlib/fmt
     GIT_TAG
-    12.2.0
+    12.2.1
     GIT_BRANCH
     master)
 
@@ -34,6 +34,11 @@ include(${cmake_helpers_SOURCE_DIR}/BuildOptions.cmake)
 
 # Not optional for the suite: the golden strings expect enums by name.
 set(AGLIO_USE_ENCHANTUM
+    ON
+    CACHE BOOL "" FORCE)
+
+# The suite covers the quantity serializer too.
+set(AGLIO_USE_MP_UNITS
     ON
     CACHE BOOL "" FORCE)
 
@@ -71,7 +76,8 @@ foreach(dep_target fmt Catch2 Catch2WithMain)
 endforeach()
 
 target_add_default_build_options(test_aglio PRIVATE)
-target_link_libraries(test_aglio PRIVATE aglio::aglio fmt::fmt Catch2::Catch2WithMain)
+target_link_libraries(
+    test_aglio PRIVATE aglio::aglio mp-units::systems fmt::fmt Catch2::Catch2WithMain) # si for the quantity tests
 
 # Catch2's TEST_CASE/SECTION macros expand __COUNTER__, which Clang flags as a C2y extension under -pedantic. The usage
 # is in Catch2, not our code, so silence it.
@@ -148,6 +154,9 @@ foreach(fail_test compile_fail_with_ref compile_fail_with_struct_ref)
         COMMAND
             ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR} -DTARGET=${fail_test}
             -DEXPECTED_MESSAGE=${COMPILE_FAIL_EXPECTED_MESSAGE} -P ${CMAKE_CURRENT_SOURCE_DIR}/compile_fail_test.cmake)
+    # RESOURCE_LOCK: every compile-fail test drives the build system of this tree; two at once under "ctest -j" are two
+    # ninja runs in one tree, which damages its .ninja_deps
+    set_tests_properties(${fail_test} PROPERTIES RESOURCE_LOCK aglio_tree_build)
 endforeach()
 
 # Packager::requireAlwaysFits: a type too big for the frame, and one without a worst case, each fail with their own
@@ -164,4 +173,5 @@ foreach(fail_case "compile_fail_frame_too_small|packs into a frame longer than t
     add_test(NAME ${fail_test}
              COMMAND ${CMAKE_COMMAND} -DBINARY_DIR=${CMAKE_BINARY_DIR} -DTARGET=${fail_test}
                      "-DEXPECTED_MESSAGE=${fail_message}" -P ${CMAKE_CURRENT_SOURCE_DIR}/compile_fail_test.cmake)
+    set_tests_properties(${fail_test} PROPERTIES RESOURCE_LOCK aglio_tree_build)
 endforeach()

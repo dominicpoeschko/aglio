@@ -16,24 +16,30 @@ jobs:
             image: archlinux:latest
         strategy:
             matrix:
+                # ship: cmake_helpers' Release as a consumer ships (NDEBUG, LTO, a gcc LTO link failing on the
+                # optimizer's late warnings). Every other entry, and the fuzz and remote-fmt jobs, are Release with
+                # their asserts and without LTO: faster, and gcc's warnings come at compile time.
                 compiler:
-                    - {cc: gcc, cxx: g++}
+                    - {cc: gcc, cxx: g++, ship: true}
                     - {cc: gcc, cxx: g++, stdlib_debug: true, sanitizer: address}
-                    - {cc: clang, cxx: clang++}
+                    - {cc: clang, cxx: clang++, ship: true}
                     - {cc: clang, cxx: clang++, stdlib: libc++, stdlib_debug: true, sanitizer: address}
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v7
 
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel python ${{ matrix.compiler.cc == 'clang' && 'clang' || '' }} ${{ matrix.compiler.stdlib == 'libc++' && 'libc++ lld' || '' }}
+                pacman -S --noconfirm git cmake ninja base-devel python ${{ matrix.compiler.cc == 'clang' && 'clang' || '' }} ${{ matrix.compiler.stdlib == 'libc++' && 'libc++ lld' || '' }}
 
             - name: Configure CMake
               run: >
-                cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+                cmake -S tests -B build -G Ninja -DUSE_WARNINGS_AS_ERRORS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+                -DCMAKE_BUILD_TYPE=Release
+                -DUSE_NATIVE_FLAG=OFF
+                ${{ !matrix.compiler.ship && '-DUSE_NDEBUG=OFF -DUSE_LTO=OFF -DCMAKE_CXX_FLAGS_RELEASE=-O3' || '' }}
                 ${{ matrix.compiler.sanitizer && format('-DUSE_SANITIZER={0}', matrix.compiler.sanitizer) || '' }}
                 ${{ matrix.compiler.stdlib && format('-DUSE_STD_LIB={0}', matrix.compiler.stdlib) || '' }}
                 ${{ matrix.compiler.stdlib_debug && '-DUSE_STDLIB_DEBUG=true' || '' }}
@@ -42,10 +48,10 @@ jobs:
                 CXX: ${{ matrix.compiler.cxx }}
 
             - name: Build project
-              run: cmake --build build
+              run: cmake --build build -j"$(nproc)"
 
             - name: Run tests
-              run: cd build && ctest --output-on-failure
+              run: cd build && ctest --output-on-failure -j"$(nproc)"
 
             # clang-tidy with this repository's .clang-tidy over the test sources (the compile-fail ones are meant not
             # to compile): any finding in src/ or tests/ fails
@@ -65,21 +71,23 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v7
 
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel clang
+                pacman -S --noconfirm git cmake ninja base-devel clang
 
             - name: Configure CMake
-              run: cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON
+              run: >
+                cmake -S tests -B build -G Ninja -DUSE_WARNINGS_AS_ERRORS=ON
+                -DCMAKE_BUILD_TYPE=Release -DUSE_NATIVE_FLAG=OFF -DUSE_NDEBUG=OFF -DUSE_LTO=OFF -DCMAKE_CXX_FLAGS_RELEASE=-O3
               env:
                 CC: clang
                 CXX: clang++
 
             - name: Build fuzz target
-              run: cmake --build build --target fuzz_packager fuzz_corpus_generator
+              run: cmake --build build -j"$(nproc)" --target fuzz_packager fuzz_corpus_generator
 
             - name: Generate seed corpus
               run: ./build/fuzz_corpus_generator build/corpus
@@ -105,21 +113,23 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v7
 
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel clang
+                pacman -S --noconfirm git cmake ninja base-devel clang
 
             - name: Configure CMake
-              run: cmake -S tests -B build -DUSE_WARNINGS_AS_ERRORS=ON
+              run: >
+                cmake -S tests -B build -G Ninja -DUSE_WARNINGS_AS_ERRORS=ON
+                -DCMAKE_BUILD_TYPE=Release -DUSE_NATIVE_FLAG=OFF -DUSE_NDEBUG=OFF -DUSE_LTO=OFF -DCMAKE_CXX_FLAGS_RELEASE=-O3
               env:
                 CC: clang
                 CXX: clang++
 
             - name: Build fuzz target
-              run: cmake --build build --target fuzz_packager fuzz_corpus_generator
+              run: cmake --build build -j"$(nproc)" --target fuzz_packager fuzz_corpus_generator
 
             - name: Generate seed corpus
               run: ./build/fuzz_corpus_generator build/corpus
@@ -136,7 +146,7 @@ jobs:
             # No node in the bare archlinux container, so act cannot run JS actions.
             - name: Upload crash artifacts
               if: failure() && !env.ACT
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                 name: fuzz-crashes
                 path: |
@@ -157,26 +167,27 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v7
 
             - name: Set up C++ environment
               run: |
                 pacman -Syu --noconfirm
-                pacman -S --noconfirm git cmake base-devel python clang
+                pacman -S --noconfirm git cmake ninja base-devel python clang
 
             - name: Configure CMake
               run: >
-                cmake -S tests/remote_fmt -B build-remote-fmt -DUSE_WARNINGS_AS_ERRORS=ON
+                cmake -S tests/remote_fmt -B build-remote-fmt -G Ninja -DUSE_WARNINGS_AS_ERRORS=ON
                 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+                -DCMAKE_BUILD_TYPE=Release -DUSE_NATIVE_FLAG=OFF -DUSE_NDEBUG=OFF -DUSE_LTO=OFF -DCMAKE_CXX_FLAGS_RELEASE=-O3
               env:
                 CC: clang
                 CXX: clang++
 
             - name: Build
-              run: cmake --build build-remote-fmt
+              run: cmake --build build-remote-fmt -j"$(nproc)"
 
             - name: Run tests
-              run: cd build-remote-fmt && ctest --output-on-failure
+              run: cd build-remote-fmt && ctest --output-on-failure -j"$(nproc)"
 
             # The only clang-tidy run that sees src/aglio/remote_fmt.hpp. The anchored header filter keeps
             # remote_fmt's own src/ out wherever FetchContent put it.
@@ -200,7 +211,7 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v7
 
             - name: Set up C++ environment
               run: |
@@ -230,7 +241,7 @@ jobs:
                 cmake -S tests/install -B build-consumer -DCMAKE_PREFIX_PATH="$PWD/prefix" \
                     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
                 cmake --build build-consumer
-                cd build-consumer && ctest --output-on-failure
+                cd build-consumer && ctest --output-on-failure -j"$(nproc)"
               env:
                 CC: clang
                 CXX: clang++
@@ -250,7 +261,7 @@ jobs:
             contents: write
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v5
+              uses: actions/checkout@v7
               with:
                 fetch-depth: 0
 

@@ -16,6 +16,9 @@
 #include <string>
 #include <variant>
 #include <vector>
+#ifdef AGLIO_USE_MP_UNITS
+    #include <mp-units/systems/si.h>
+#endif
 
 namespace Test::TypeSerializer {
 
@@ -437,3 +440,41 @@ TEST_CASE("A value at its largest serializes to maxSerializedSizeV",
     REQUIRE(aglio::TypeSerializer<Test::TypeSerializer::WithCapped, S>::serialize(v, ser));
     CHECK(buffer.size() == aglio::maxSerializedSizeV<Test::TypeSerializer::WithCapped, S>);
 }
+
+#ifdef AGLIO_USE_MP_UNITS
+TEST_CASE("Serializer: mp-units quantities as their number, offset units too",
+          "[serializer]") {
+    using namespace Test::TypeSerializer;
+    using S        = std::uint32_t;
+    namespace si   = mp_units::si;
+    using DeciDegC = mp_units::quantity<si::deci<si::degree_Celsius>, std::int16_t>;
+    using MilliAmp = mp_units::quantity<si::milli<si::ampere>, std::uint32_t>;
+    using Metre    = mp_units::quantity<si::metre, double>;
+
+    CHECK(roundTripCheck<S>(DeciDegC{std::int16_t{-12}, si::deci<si::degree_Celsius>}));
+    CHECK(roundTripCheck<S>(
+      DeciDegC{std::numeric_limits<std::int16_t>::min(), si::deci<si::degree_Celsius>}));
+    CHECK(roundTripCheck<S>(MilliAmp{4'200U, si::milli<si::ampere>}));
+    CHECK(roundTripCheck<S>(Metre{1.25, si::metre}));
+    CHECK(roundTripCheck<S>(std::optional<DeciDegC>{}));
+    CHECK(roundTripCheck<S>(std::optional<DeciDegC>{
+      DeciDegC{std::int16_t{4'500}, si::deci<si::degree_Celsius>}
+    }));
+
+    // the wire is the rep alone: as many bytes as a bare int16_t, and the same ones
+    std::vector<std::byte>          q;
+    std::vector<std::byte>          raw;
+    aglio::DynamicSerializationView qs{q};
+    aglio::DynamicSerializationView rs{raw};
+    CHECK(aglio::TypeSerializer<DeciDegC, S>::serialize(
+      DeciDegC{std::int16_t{-12}, si::deci<si::degree_Celsius>},
+      qs));
+    CHECK(aglio::TypeSerializer<std::int16_t, S>::serialize(std::int16_t{-12}, rs));
+    bool const sameBytes
+      = q == raw;   // a bool: Catch2 would print the vectors, and std::byte has no printer
+    CHECK(sameBytes);
+    STATIC_CHECK(aglio::serializedSizeV<DeciDegC, S> == sizeof(std::int16_t));
+    STATIC_CHECK(aglio::MaxSerializedSize<std::optional<DeciDegC>, S>::value
+                 == 1 + sizeof(std::int16_t));
+}
+#endif
