@@ -456,10 +456,17 @@ TEST_CASE("Serializer: mp-units quantities as their number, offset units too",
       DeciDegC{std::numeric_limits<std::int16_t>::min(), si::deci<si::degree_Celsius>}));
     CHECK(roundTripCheck<S>(MilliAmp{4'200U, si::milli<si::ampere>}));
     CHECK(roundTripCheck<S>(Metre{1.25, si::metre}));
-    CHECK(roundTripCheck<S>(std::optional<DeciDegC>{}));
-    CHECK(roundTripCheck<S>(std::optional<DeciDegC>{
-      DeciDegC{std::int16_t{4'500}, si::deci<si::degree_Celsius>}
-    }));
+    // An optional quantity is compared by hand: libc++ lacks LWG 4072, so its
+    // optional<Q> == optional<Q> also tries optional<Q> == U with U = optional<Q>, whose
+    // Q == optional<Q> asks mp-units' RepresentationOf for equality_comparable<optional<Q>>
+    // again ("satisfaction of constraint ... depends on itself").
+    DeciDegC const          hot{std::int16_t{4'500}, si::deci<si::degree_Celsius>};
+    std::optional<DeciDegC> none{hot};   // filled, so the empty one has to clear it
+    CHECK(roundTrip<S>(std::optional<DeciDegC>{}, none));
+    CHECK(!none.has_value());
+    std::optional<DeciDegC> some;
+    CHECK(roundTrip<S>(std::optional<DeciDegC>{hot}, some));
+    CHECK((some.has_value() && *some == hot));
 
     // the wire is the rep alone: as many bytes as a bare int16_t, and the same ones
     std::vector<std::byte>          q;
