@@ -15,6 +15,7 @@
     #pragma clang diagnostic pop
 #endif
 //
+#include "constexpr.hpp"
 #include "fmt.hpp"
 #include "format.hpp"
 #include "ostream.hpp"

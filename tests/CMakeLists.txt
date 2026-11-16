@@ -160,9 +160,13 @@ foreach(fail_test compile_fail_with_ref compile_fail_with_struct_ref)
 endforeach()
 
 # Packager::requireAlwaysFits: a type too big for the frame, and one without a worst case, each fail with their own
-# message.
-foreach(fail_case "compile_fail_frame_too_small|packs into a frame longer than the"
-                  "compile_fail_no_worst_case|has no worst-case wire size")
+# message. An enum without a fixed underlying type has no value for most of what a wire can hold: refused, with what to
+# do.
+foreach(
+    fail_case
+    "compile_fail_frame_too_small|packs into a frame longer than the"
+    "compile_fail_no_worst_case|has no worst-case wire size"
+    "compile_fail_unfixed_enum|give the enum an underlying type")
     string(REPLACE "|" ";" fail_case "${fail_case}")
     list(GET fail_case 0 fail_test)
     list(GET fail_case 1 fail_message)

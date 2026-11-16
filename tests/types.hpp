@@ -1,15 +1,19 @@
 #pragma once
 
 #include <aglio/inline.hpp>
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <expected>
+#include <initializer_list>
 #include <list>
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <tuple>
 #include <variant>
@@ -19,8 +23,9 @@ namespace Types {
 // Enum types for testing
 enum class Color : std::uint8_t { red = 1, green = 2, blue = 3 };
 
-// The unscoped enum is the case under test (wire size of int).
-enum Status { unknown = 0, active = 1, inactive = 2 };
+// The unscoped enum is the case under test (wire size of int). Its underlying type is stated: without one aglio
+// refuses the enum (compile_fail_unfixed_enum.cpp).
+enum Status : int { unknown = 0, active = 1, inactive = 2 };
 
 // All primitive types
 struct Primitive {
@@ -256,6 +261,51 @@ struct ContiguousAssociative {
     bool                    operator==(ContiguousAssociative const&) const = default;
 };
 
+/// A vector of fixed capacity over a std::array: contiguous, its bound in its type, and usable in
+/// constant evaluation (a std::vector is not, as a constexpr variable).
+template<typename T, std::size_t Cap>
+struct StaticVec {
+    std::array<T, Cap> storage{};
+    std::size_t        count{};
+
+    constexpr StaticVec() = default;
+
+    constexpr StaticVec(std::initializer_list<T> init) {
+        for(auto const& v : init) { storage[count++] = v; }
+    }
+
+    static constexpr std::size_t capacity() { return Cap; }
+
+    static constexpr std::size_t max_size() { return Cap; }
+
+    [[nodiscard]] constexpr std::size_t size() const { return count; }
+
+    /// The serializer asks max_size() first.
+    constexpr void resize(std::size_t n) { count = n; }
+
+    constexpr auto begin() { return std::span{storage}.first(count).begin(); }
+
+    constexpr auto end() { return std::span{storage}.first(count).end(); }
+
+    [[nodiscard]] constexpr auto begin() const { return std::span{storage}.first(count).begin(); }
+
+    [[nodiscard]] constexpr auto end() const { return std::span{storage}.first(count).end(); }
+
+    constexpr T* data() AGLIO_LIFETIMEBOUND { return storage.data(); }
+
+    [[nodiscard]] constexpr T const* data() const AGLIO_LIFETIMEBOUND { return storage.data(); }
+
+    constexpr bool operator==(StaticVec const& o) const { return std::ranges::equal(*this, o); }
+};
+
+// Contiguous ranges of bool: whatever byte the wire hands one, the element is true or false.
+struct BoolRanges {
+    std::array<bool, 4> fixed{};
+    StaticVec<bool, 6>  some{};
+
+    constexpr bool operator==(BoolRanges const&) const = default;
+};
+
 template<typename T>
 T createDefault();
 
@@ -410,6 +460,14 @@ ContiguousAssociative createDefault<ContiguousAssociative>() {
     a.cset.insert(Color::red);
     a.cset.insert(Color::blue);
     return a;
+}
+
+template<>
+BoolRanges createDefault<BoolRanges>() {
+    return BoolRanges{
+      .fixed = {true, false, false, true},
+      .some  = {false, true, true}
+    };
 }
 
 using List = std::tuple<Primitive,

@@ -12,7 +12,7 @@ namespace Test::packager {
 struct MyCrc {
     using type = std::uint32_t;
 
-    static type calc(std::span<std::byte const> data) {
+    static constexpr type calc(std::span<std::byte const> data) {
         type crc = 0;
         for(auto const b : data) { crc += static_cast<type>(b); }
         return crc;
@@ -20,9 +20,9 @@ struct MyCrc {
 };
 
 struct MsgId {
-    std::uint8_t msgType{};
-    std::uint8_t channel{};
-    bool         operator==(MsgId const&) const = default;
+    std::uint8_t   msgType{};
+    std::uint8_t   channel{};
+    constexpr bool operator==(MsgId const&) const = default;
 };
 
 struct MsgIdCrc {
@@ -31,7 +31,7 @@ struct MsgIdCrc {
     // The wraparound is intentional for a checksum, so it is done in unsigned arithmetic with an
     // explicit narrowing cast - `+=` on a std::uint8_t promotes to int and trips UBSan's
     // implicit-conversion check, which is fatal in the fuzz build.
-    static type calc(std::span<std::byte const> data) {
+    static constexpr type calc(std::span<std::byte const> data) {
         type r{};
         for(auto const b : data) {
             r.msgType = static_cast<std::uint8_t>((r.msgType + static_cast<unsigned>(b)) & 0xFFU);

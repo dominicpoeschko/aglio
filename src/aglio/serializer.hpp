@@ -4,6 +4,8 @@
 #include "type_descriptor.hpp"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <chrono>
 #ifdef AGLIO_USE_MP_UNITS
     // macro-gated, not __has_include: a build that asks for quantities and lacks mp-units has to fail
@@ -17,6 +19,7 @@
 #include <limits>
 #include <optional>
 #include <ranges>
+#include <ratio>
 #include <span>
 #include <tuple>
 #include <type_traits>
@@ -26,8 +29,62 @@
 namespace aglio {
 namespace Detail {
 
+    /// A number or an enum: on the wire as the bytes it has in memory.
     template<typename T>
     concept Trivial = std::is_integral_v<T> || std::is_floating_point_v<T> || std::is_enum_v<T>;
+
+    /// An enum with a fixed underlying type (`enum class E`, `enum E : std::uint8_t`): every value of
+    /// that type is a value of the enum. List-initialisation from an integer compiles for exactly
+    /// these.
+    template<typename T>
+    concept FixedEnum = std::is_enum_v<T> && requires { T{0}; };
+
+    /// Refuses an enum without a fixed underlying type and says what to do. Only the values between
+    /// its enumerators are values of such an enum, and reading any other is undefined behaviour.
+    template<typename T>
+    struct WireEnum {
+        static_assert(FixedEnum<T>,
+                      "aglio: give the enum an underlying type (enum E : std::uint8_t { ... }): "
+                      "without one the wire can hold bytes that are no value of it");
+        static constexpr bool value = true;
+    };
+
+    /// Whether every byte of a floating point type is part of its value. An x87 long double is
+    /// ten bytes in twelve or sixteen: the rest would go onto the wire as bytes nobody set.
+    template<typename T>
+    consteval bool floatFillsItsBytes() {
+        using L = std::numeric_limits<T>;
+        // the exponent field of a binary format: as wide as its range of exponents needs
+        int const exponentBits
+          = std::bit_width(static_cast<unsigned>(L::max_exponent - L::min_exponent + 3)) - 1;
+        return L::radix == 2
+            && sizeof(T) * static_cast<std::size_t>(std::numeric_limits<unsigned char>::digits)
+                 == static_cast<std::size_t>(L::digits) + static_cast<std::size_t>(exponentBits);
+    }
+
+    /// True, or a failure naming the reason, for a number or enum that cannot go onto a wire.
+    template<typename T>
+    consteval bool wireLeafOk() {
+        if constexpr(std::is_enum_v<T>) {
+            return WireEnum<T>::value;
+        } else if constexpr(std::is_floating_point_v<T>) {
+            static_assert(floatFillsItsBytes<T>(),
+                          "aglio: this floating point type has padding bytes on this target (an "
+                          "x87 long double): it has no wire form; use double");
+            return true;
+        } else {
+            return true;
+        }
+    }
+
+    /// Every pattern of its bytes is a value of it: an integer other than bool, a floating point
+    /// number, an enum over an integer other than bool. Only a range of these is read with one
+    /// copy; a bool holding 2 would be no bool.
+    template<typename T>
+    concept EveryBitPatternValid
+      = (std::is_integral_v<T> && !std::same_as<std::remove_cv_t<T>, bool>)
+     || std::is_floating_point_v<T>
+     || (FixedEnum<T> && !std::same_as<std::underlying_type_t<T>, bool>);
 
     template<typename T>
     concept IsTupleLike = requires {
@@ -110,9 +167,9 @@ namespace Detail {
         constexpr bool insert(std::span<std::byte const> data) {
             if(data.size() > N - used) { return false; }
             if(!data.empty()) {
-                std::memcpy(std::next(to, static_cast<std::make_signed_t<std::size_t>>(used)),
-                            data.data(),
-                            data.size());
+                copyBytes(std::next(to, static_cast<std::make_signed_t<std::size_t>>(used)),
+                          data.data(),
+                          data.size());
                 used += data.size();
             }
             return true;
@@ -127,6 +184,16 @@ namespace Detail {
 
         /// What a range's length is checked against.
         static constexpr std::size_t size() { return N; }
+
+        /// The next n bytes (n > 0) for the caller to read, or nullptr when the claim holds fewer.
+        AGLIO_INLINE constexpr std::byte const* claim(std::size_t n) {
+            if(n > N - used) { return nullptr; }
+            std::byte const* const at
+              = std::next(from, static_cast<std::make_signed_t<std::size_t>>(used));
+            AGLIO_ASSUME(at != nullptr);
+            used += n;
+            return at;
+        }
 
         template<std::size_t M>
             requires(M != std::dynamic_extent)
@@ -144,9 +211,9 @@ namespace Detail {
         constexpr bool extract(std::span<std::byte> data) {
             if(data.size() > N - used) { return false; }
             if(!data.empty()) {
-                std::memcpy(data.data(),
-                            std::next(from, static_cast<std::make_signed_t<std::size_t>>(used)),
-                            data.size());
+                copyBytes(data.data(),
+                          std::next(from, static_cast<std::make_signed_t<std::size_t>>(used)),
+                          data.size());
                 used += data.size();
             }
             return true;
@@ -176,6 +243,29 @@ namespace Detail {
 
 }   // namespace Detail
 
+namespace Detail {
+
+    /// `n` numbers (n > 0) out of their bytes: each through std::bit_cast, as the leaf reads one,
+    /// so that no wire byte is copied into an element. Written for the optimizer to see the one
+    /// copy this is: the two sides do not overlap (AGLIO_RESTRICT - what a std::memcpy call says
+    /// of its arguments), and the loop tests at its end (one that tests at its start is not
+    /// recognised as a copy when optimizing for size).
+    template<typename T>
+    constexpr void numbersFromBytes(T* AGLIO_RESTRICT               out,
+                                    std::byte const* AGLIO_RESTRICT from,
+                                    std::size_t                     n) noexcept {
+        std::ptrdiff_t i{};
+        do {
+            std::array<std::byte, sizeof(T)> bytes{};
+            copyFixed<sizeof(T)>(bytes.data(),
+                                 std::next(from, i * static_cast<std::ptrdiff_t>(sizeof(T))));
+            *std::next(out, i) = std::bit_cast<T>(bytes);
+            ++i;
+        } while(i != static_cast<std::ptrdiff_t>(n));
+    }
+
+}   // namespace Detail
+
 template<typename SizeT>
 struct TypeSerializer<bool, SizeT> {
     AGLIO_INLINE static constexpr bool serialize(bool  value,
@@ -195,18 +285,42 @@ struct TypeSerializer<bool, SizeT> {
     }
 };
 
+/// A number or an enum: the bytes it has in memory. An enum without a fixed underlying type is
+/// refused (Detail::WireEnum).
 template<Detail::Trivial T, typename SizeT>
 struct TypeSerializer<T, SizeT> {
+    static_assert(Detail::wireLeafOk<T>());
+
+    /// Its bytes, read as bytes. In constant evaluation, where no object can be looked at as
+    /// bytes, a std::bit_cast of it.
     template<typename Buffer>
     AGLIO_INLINE static constexpr bool serialize(T const& v,
                                                  Buffer&  buffer) {
-        return buffer.insert(std::as_bytes(std::span<T const, 1>{std::addressof(v), 1}));
+        if consteval {
+            auto const bytes = std::bit_cast<std::array<std::byte, sizeof(T)>>(v);
+            return buffer.insert(std::span<std::byte const, sizeof(T)>{bytes});
+        } else {
+            return buffer.insert(std::as_bytes(std::span<T const, 1>{std::addressof(v), 1}));
+        }
     }
 
+    /// Through bytes and std::bit_cast, not a copy into `v`: bytes off a wire never were a T, and
+    /// only std::bit_cast says what value they make. An enum over bool is read as the bool, which
+    /// takes any byte for true or false.
     template<typename Buffer>
     AGLIO_INLINE static constexpr bool deserialize(T&      v,
                                                    Buffer& buffer) {
-        return buffer.extract(std::as_writable_bytes(std::span<T, 1>{std::addressof(v), 1}));
+        if constexpr(Detail::EveryBitPatternValid<T>) {
+            std::array<std::byte, sizeof(T)> bytes{};
+            if(!buffer.extract(std::span<std::byte, sizeof(T)>{bytes})) { return false; }
+            v = std::bit_cast<T>(bytes);
+            return true;
+        } else {
+            bool flag{};
+            if(!TypeSerializer<bool, SizeT>::deserialize(flag, buffer)) { return false; }
+            v = static_cast<T>(flag);
+            return true;
+        }
     }
 };
 
@@ -357,6 +471,20 @@ struct TypeSerializer<std::variant<Ts...>, SizeT> {
         return TypeSerializer<T, SizeT>::deserialize(alt, buffer);
     }
 
+    /// The alternative the index names, unchecked: the caller compared the index, and std::get
+    /// would bring its throw. In constant evaluation std::get all the same - its check costs
+    /// nothing there, and a sanitizer build of gcc does not take the address of a constexpr
+    /// object for non-null, which std::get_if asks.
+    template<std::size_t I>
+    AGLIO_INLINE static constexpr auto const&
+    alternative(std::variant<Ts...> const& v AGLIO_LIFETIMEBOUND) {
+        if consteval {
+            return std::get<I>(v);
+        } else {
+            return *std::get_if<I>(&v);
+        }
+    }
+
     template<typename Buffer>
     AGLIO_INLINE static constexpr bool serialize(std::variant<Ts...> const& v,
                                                  Buffer&                    buffer) {
@@ -371,7 +499,7 @@ struct TypeSerializer<std::variant<Ts...>, SizeT> {
         return [&]<std::size_t... I>(std::index_sequence<I...>) {
             bool ok = false;
             static_cast<void>(
-              ((v.index() == I ? (ok = serializeAlternative(*std::get_if<I>(&v), buffer), true)
+              ((v.index() == I ? (ok = serializeAlternative(alternative<I>(v), buffer), true)
                                : false)
                || ...));
             return ok;
@@ -406,23 +534,60 @@ struct TypeSerializer<std::variant<Ts...>, SizeT> {
     }
 };
 
+namespace Detail {
+
+    /// What a duration's count travels as. std::chrono::minutes, hours, days, weeks, months and
+    /// years count in a type each standard library chooses - `long` for minutes and hours in
+    /// libc++, four bytes on a 32-bit target and eight on a 64-bit one, 64 bits everywhere in
+    /// libstdc++ - and a wire is read by another machine with another library. So a duration of a
+    /// minute or longer whose count is a signed integer of 32 bits or more travels as 32 bits,
+    /// whatever counts it in memory. Every other duration travels as its own count:
+    /// std::chrono::nanoseconds to seconds are 64 bits everywhere, and a narrower, an unsigned or
+    /// a floating point count is one somebody named.
+    template<typename Rep, typename Period>
+    using DurationWireRep
+      = std::conditional_t<std::signed_integral<Rep> && (sizeof(Rep) >= sizeof(std::int32_t))
+                             && std::ratio_greater_equal_v<Period, std::ratio<60>>,
+                           std::int32_t,
+                           Rep>;
+
+}   // namespace Detail
+
+/// A duration: its count, as Detail::DurationWireRep says. A count the wire's type cannot hold (a
+/// 64-bit count of hours past 245 000 years) is refused, not cut.
 template<typename Rep, typename Period, typename SizeT>
 struct TypeSerializer<std::chrono::duration<Rep, Period>, SizeT> {
+    using Wire = Detail::DurationWireRep<Rep, Period>;
+    /// The count in memory is the count on the wire: nothing to convert, nothing to check.
+    static constexpr bool asItIs = sizeof(Wire) == sizeof(Rep);
+
     template<typename Buffer>
     AGLIO_INLINE static constexpr bool serialize(std::chrono::duration<Rep,
                                                                        Period> const& v,
                                                  Buffer&                              buffer) {
-        return TypeSerializer<Rep, SizeT>::serialize(v.count(), buffer);
+        if constexpr(asItIs) {
+            return TypeSerializer<Rep, SizeT>::serialize(v.count(), buffer);
+        } else {
+            if(!std::in_range<Wire>(v.count())) { return false; }
+            return TypeSerializer<Wire, SizeT>::serialize(static_cast<Wire>(v.count()), buffer);
+        }
     }
 
     template<typename Buffer>
     AGLIO_INLINE static constexpr bool deserialize(std::chrono::duration<Rep,
                                                                          Period>& v,
                                                    Buffer&                        buffer) {
-        Rep vv;
-        if(!TypeSerializer<Rep, SizeT>::deserialize(vv, buffer)) { return false; }
-        v = std::chrono::duration<Rep, Period>{vv};
-        return true;
+        if constexpr(asItIs) {
+            Rep vv;
+            if(!TypeSerializer<Rep, SizeT>::deserialize(vv, buffer)) { return false; }
+            v = std::chrono::duration<Rep, Period>{vv};
+            return true;
+        } else {
+            Wire vv{};
+            if(!TypeSerializer<Wire, SizeT>::deserialize(vv, buffer)) { return false; }
+            v = std::chrono::duration<Rep, Period>{static_cast<Rep>(vv)};
+            return true;
+        }
     }
 };
 
@@ -482,9 +647,50 @@ struct TypeSerializer<T, SizeT> {
 
 template<std::ranges::range T, typename SizeT>
 struct TypeSerializer<T, SizeT> {
-    static constexpr bool isContiguous = std::ranges::contiguous_range<T>;
-    using value_t                      = std::ranges::range_value_t<T>;
-    static constexpr bool isTrivial    = Detail::Trivial<value_t>;
+    using value_t = std::ranges::range_value_t<T>;
+    static_assert(Detail::wireLeafOk<value_t>());
+
+    /// The whole range at once, where it is contiguous memory and no map or set. Written so for
+    /// every number and enum: its bytes, read as bytes (a bool's byte is 0 or 1; in constant
+    /// evaluation, where nothing can be looked at as bytes, element by element). Read so only
+    /// where every byte pattern is a value (readAtOnce); elements of any other kind take the
+    /// loop, which makes each of them one.
+    static constexpr bool isBulk
+      = std::ranges::contiguous_range<T> && !Detail::IsMap<T> && !Detail::IsSet<T>;
+    static constexpr bool bulkWrite = isBulk && Detail::Trivial<value_t>;
+    static constexpr bool bulkRead  = isBulk && Detail::EveryBitPatternValid<value_t>;
+
+    /// The elements out of the buffer's bytes, each through std::bit_cast
+    /// (Detail::numbersFromBytes): nothing copies wire bytes into an element, which would leave
+    /// to the compiler what the element then holds. One bounds check for all of them where the
+    /// buffer hands out its bytes; from any other buffer (a stream) through a block of bytes of
+    /// its own. Inline on purpose: one shared reader per element type made the images that
+    /// read few ranges larger.
+    template<typename Buffer>
+    static constexpr bool readAtOnce(std::span<value_t> out,
+                                     Buffer&            buffer) {
+        constexpr std::size_t each = sizeof(value_t);
+        if(out.empty()) { return true; }
+        if constexpr(requires {
+                         { buffer.claim(std::size_t{}) } -> std::same_as<std::byte const*>;
+                     })
+        {
+            std::byte const* const from = buffer.claim(out.size() * each);
+            if(from == nullptr) { return false; }
+            Detail::numbersFromBytes(out.data(), from, out.size());
+            return true;
+        } else {
+            constexpr std::size_t                       blockElements = each < 256 ? 256 / each : 1;
+            std::array<std::byte, blockElements * each> block{};
+            do {
+                std::size_t const count = std::min(out.size(), blockElements);
+                if(!buffer.extract(std::span{block}.first(count * each))) { return false; }
+                Detail::numbersFromBytes(out.data(), block.data(), count);
+                out = out.subspan(count);
+            } while(!out.empty());
+            return true;
+        }
+    }
 
     template<typename Buffer>
     static constexpr bool serialize(T const& v,
@@ -502,14 +708,13 @@ struct TypeSerializer<T, SizeT> {
 
         if(!TypeSerializer<SizeT, SizeT>::serialize(size, buffer)) { return false; }
 
-        if constexpr(isContiguous && isTrivial && !Detail::IsMap<T> && !Detail::IsSet<T>) {
-            return buffer.insert(std::as_bytes(std::span{v}));
-        } else {
-            for(auto const& vv : v) {
-                if(!TypeSerializer<value_t, SizeT>::serialize(vv, buffer)) { return false; }
-            }
-            return true;
+        if constexpr(bulkWrite) {
+            if !consteval { return buffer.insert(std::as_bytes(std::span{v})); }
         }
+        for(auto const& vv : v) {
+            if(!TypeSerializer<value_t, SizeT>::serialize(vv, buffer)) { return false; }
+        }
+        return true;
     }
 
     template<typename Buffer>
@@ -531,41 +736,32 @@ struct TypeSerializer<T, SizeT> {
             if(std::ranges::size(v) != size) { return false; }
         }
 
-        if constexpr(isContiguous && isTrivial && !Detail::IsMap<T> && !Detail::IsSet<T>) {
-            return buffer.extract(std::as_writable_bytes(std::span{v}));
-        } else {
-            if constexpr(Detail::IsMap<T> || Detail::IsSet<T>) {
-                while(size != 0) {
-                    --size;
-                    using value_type = typename Detail::AssociativeContainerValueType<T>::type;
+        if constexpr(bulkRead) { return readAtOnce(std::span<value_t>{v}, buffer); }
+        if constexpr(Detail::IsMap<T> || Detail::IsSet<T>) {
+            while(size != 0) {
+                --size;
+                using value_type = typename Detail::AssociativeContainerValueType<T>::type;
 
-                    value_type vv;
-                    if(!TypeSerializer<value_type, SizeT>::deserialize(vv, buffer)) {
+                value_type vv;
+                if(!TypeSerializer<value_type, SizeT>::deserialize(vv, buffer)) { return false; }
+                v.insert(vv);
+            }
+        } else {
+            for(auto&& vv : v) {
+                if constexpr(requires { TypeSerializer<value_t, SizeT>::deserialize(vv, buffer); })
+                {
+                    if(!TypeSerializer<value_t, SizeT>::deserialize(vv, buffer)) { return false; }
+                } else {
+                    // Proxy reference, as std::vector<bool> hands out: assign through it.
+                    value_t element{};
+                    if(!TypeSerializer<value_t, SizeT>::deserialize(element, buffer)) {
                         return false;
                     }
-                    v.insert(vv);
-                }
-            } else {
-                for(auto&& vv : v) {
-                    if constexpr(requires {
-                                     TypeSerializer<value_t, SizeT>::deserialize(vv, buffer);
-                                 })
-                    {
-                        if(!TypeSerializer<value_t, SizeT>::deserialize(vv, buffer)) {
-                            return false;
-                        }
-                    } else {
-                        // Proxy reference, as std::vector<bool> hands out: assign through it.
-                        value_t element{};
-                        if(!TypeSerializer<value_t, SizeT>::deserialize(element, buffer)) {
-                            return false;
-                        }
-                        vv = element;
-                    }
+                    vv = element;
                 }
             }
-            return true;
         }
+        return true;
     }
 };
 
@@ -598,11 +794,14 @@ struct Serializer {
 };
 
 template<Detail::Trivial T, typename SizeT>
-struct SerializedSize<T, SizeT> : std::integral_constant<std::size_t, sizeof(T)> {};
+struct SerializedSize<T, SizeT> : std::integral_constant<std::size_t, sizeof(T)> {
+    static_assert(Detail::wireLeafOk<T>());
+};
 
 template<typename Rep, typename Period, typename SizeT>
     requires HasFixedSerializedSize<Rep, SizeT>
-struct SerializedSize<std::chrono::duration<Rep, Period>, SizeT> : SerializedSize<Rep, SizeT> {};
+struct SerializedSize<std::chrono::duration<Rep, Period>, SizeT>
+  : SerializedSize<Detail::DurationWireRep<Rep, Period>, SizeT> {};
 
 #ifdef AGLIO_USE_MP_UNITS
 template<auto R, typename Rep, typename SizeT>
@@ -684,8 +883,8 @@ inline constexpr std::size_t serializedSizeV = SerializedSize<T, SizeT>::value;
 ///  - a fixed SerializedSize is its own bound;
 ///  - optional / expected: the flag and the larger side (expected<void, E>: flag + E);
 ///  - variant: the index (one byte, or Size_t past 255 alternatives) and the largest alternative;
-///  - duration and (AGLIO_USE_MP_UNITS) mp-units quantity: its rep; tuple-likes and described structs: the sum of
-///    their members;
+///  - duration: its count as it travels (Detail::DurationWireRep); (AGLIO_USE_MP_UNITS) mp-units
+///    quantity: its rep; tuple-likes and described structs: the sum of their members;
 ///  - a range: the Size_t count and capacity x its largest element, where the capacity is known
 ///    from the type alone - a static `capacity()` (a static vector, string, map or set) or a tuple
 ///    size (std::array). The count stops at what Size_t can hold: the serializer refuses more.
@@ -852,7 +1051,9 @@ namespace Detail {
                   sizeof(Index_t),
                   largestOf(maxSizeOf<std::variant_alternative_t<Is, T>, SizeT>()...));
             }(std::make_index_sequence<n>{});
-        } else if constexpr(isDurationV<T> || isQuantityV<T>) {
+        } else if constexpr(isDurationV<T>) {
+            return maxSizeOf<DurationWireRep<typename T::rep, typename T::period>, SizeT>();
+        } else if constexpr(isQuantityV<T>) {
             return maxSizeOf<typename T::rep, SizeT>();
         } else if constexpr(IsTupleLikeButNotRange<T>) {
             return tupleMaxSize<T, SizeT>();

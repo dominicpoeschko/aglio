@@ -3,6 +3,8 @@
 #include "serialization_buffers.hpp"
 #include "serializer.hpp"
 
+#include <array>
+#include <bit>
 #include <concepts>
 #include <cstddef>
 #include <expected>
@@ -206,7 +208,7 @@ namespace Detail {
         public:
             static constexpr bool fixedCapacity = fixedCapacityV<Buffer>;
 
-            explicit BufferAdapter(Buffer& buffer_ AGLIO_LIFETIMEBOUND)
+            constexpr explicit BufferAdapter(Buffer& buffer_ AGLIO_LIFETIMEBOUND)
               : buffer{buffer_}
               , startSize{buffer.size()} {}
 
@@ -215,16 +217,18 @@ namespace Detail {
             BufferAdapter& operator=(BufferAdapter const&) = delete;
             BufferAdapter& operator=(BufferAdapter&&)      = delete;
 
-            [[nodiscard]] std::size_t size() const { return buffer.size() - startSize; }
+            [[nodiscard]] constexpr std::size_t size() const { return buffer.size() - startSize; }
 
-            [[nodiscard]] std::size_t finalizedSize() const { return finalizedEnd - startSize; }
+            [[nodiscard]] constexpr std::size_t finalizedSize() const {
+                return finalizedEnd - startSize;
+            }
 
-            void resize(std::size_t newSize) { buffer.resize(newSize + startSize); }
+            constexpr void resize(std::size_t newSize) { buffer.resize(newSize + startSize); }
 
             template<typename Op>
                 requires Overwritable<Buffer>
-            void resize_and_overwrite(std::size_t newSize,
-                                      Op&&        op) {
+            constexpr void resize_and_overwrite(std::size_t newSize,
+                                                Op&&        op) {
                 buffer.resize_and_overwrite(newSize + startSize, [&](auto* first, std::size_t n) {
                     return op(std::next(first,
                                         static_cast<std::make_signed_t<std::size_t>>(startSize)),
@@ -234,7 +238,7 @@ namespace Detail {
             }
 
             /// Grows for bytes the caller will overwrite; unfilled where the buffer allows.
-            void resizeForOverwrite(std::size_t newSize) {
+            constexpr void resizeForOverwrite(std::size_t newSize) {
                 if constexpr(Overwritable<Buffer>) {
                     resize_and_overwrite(newSize, KeepAll{});
                 } else {
@@ -242,7 +246,7 @@ namespace Detail {
                 }
             }
 
-            [[nodiscard]] std::size_t max_size() const {
+            [[nodiscard]] constexpr std::size_t max_size() const {
                 if constexpr(requires { buffer.max_size(); }) {
                     auto const bufferMaxSize = static_cast<std::size_t>(buffer.max_size());
                     auto const adjustedMax
@@ -253,26 +257,26 @@ namespace Detail {
                 }
             }
 
-            auto& operator[](std::size_t pos) { return buffer[pos]; }
+            constexpr auto& operator[](std::size_t pos) { return buffer[pos]; }
 
-            void finalize() {
+            constexpr void finalize() {
                 finalizedEnd = buffer.size();
                 finalized    = true;
             }
 
-            auto data() {
+            constexpr auto data() {
                 return std::next(buffer.data(),
                                  static_cast<std::make_signed_t<std::size_t>>(startSize));
             }
 
-            auto asSpan() { return std::span{std::ranges::subrange(begin(), end())}; }
+            constexpr auto asSpan() { return std::span{std::ranges::subrange(begin(), end())}; }
 
-            auto begin() {
+            constexpr auto begin() {
                 return std::next(buffer.begin(),
                                  static_cast<std::make_signed_t<std::size_t>>(startSize));
             }
 
-            auto end() {
+            constexpr auto end() {
                 if(finalized) {
                     return std::next(buffer.begin(),
                                      static_cast<std::make_signed_t<std::size_t>>(finalizedEnd));
@@ -280,7 +284,7 @@ namespace Detail {
                 return std::next(begin(), static_cast<std::make_signed_t<std::size_t>>(size()));
             }
 
-            bool empty() {
+            constexpr bool empty() {
                 if(finalized) { return finalizedEnd - startSize == 0; }
                 return buffer.size() <= startSize;
             }
@@ -288,8 +292,8 @@ namespace Detail {
 
         template<typename T,
                  std::size_t N>
-        static bool headerWrite(std::span<std::byte> buf,
-                                T const&             v) {
+        static constexpr bool headerWrite(std::span<std::byte> buf,
+                                          T const&             v) {
             auto                            sub = buf.first<N>();
             aglio::DynamicSerializationView sebuf{sub};
             return aglio::TypeSerializer<T, Size_t>::serialize(v, sebuf);
@@ -297,11 +301,49 @@ namespace Detail {
 
         template<typename T,
                  std::size_t N>
-        static bool headerRead(T&                         v,
-                               std::span<std::byte const> buf) {
+        static constexpr bool headerRead(T&                         v,
+                                         std::span<std::byte const> buf) {
             auto                              sub = buf.first<N>();
             aglio::DynamicDeserializationView debuf{sub};
             return aglio::TypeSerializer<T, Size_t>::deserialize(v, debuf);
+        }
+
+        /// The start marker or the size into the frame at `to`: its bytes, as the serializer
+        /// writes a number.
+        template<typename T,
+                 typename Byte>
+        AGLIO_INLINE static constexpr void putHeaderField(Byte*    to,
+                                                          T const& v) {
+            auto const bytes = std::bit_cast<std::array<std::byte, sizeof(T)>>(v);
+            copyFixed<sizeof(T)>(to, bytes.data());
+        }
+
+        /// The bytes between two positions of a buffer, for the CRC: as they are in a std::byte
+        /// buffer - the only kind that works in constant evaluation -, read as bytes in any other.
+        template<typename It>
+        static constexpr std::span<std::byte const> bytesBetween(It first,
+                                                                 It last) {
+            std::span const all{std::ranges::subrange(first, last)};
+            if constexpr(std::same_as<std::remove_cv_t<typename decltype(all)::element_type>,
+                                      std::byte>)
+            {
+                return all;
+            } else {
+                return std::as_bytes(all);
+            }
+        }
+
+        /// The start marker or the size as it lies in the frame, `offset` bytes in: through bytes
+        /// and std::bit_cast, as the serializer reads a number.
+        template<typename T,
+                 typename Span>
+        AGLIO_INLINE static constexpr T headerField(Span const& span,
+                                                    std::size_t offset) {
+            std::array<std::byte, sizeof(T)> bytes{};
+            copyFixed<sizeof(T)>(
+              bytes.data(),
+              std::next(span.data(), static_cast<std::make_signed_t<std::size_t>>(offset)));
+            return std::bit_cast<T>(bytes);
         }
 
         /// A failed pack leaves the buffer unchanged.
@@ -331,8 +373,8 @@ namespace Detail {
 
             if constexpr(Config::useCrc && Config::useHeaderCrc) {
                 BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
-                auto const                          bodyCrc = Config::Crc::calc(std::as_bytes(
-                  std::span(std::ranges::subrange(bodyBuffer.begin(), bodyBuffer.end()))));
+                auto const                          bodyCrc
+                  = Config::Crc::calc(bytesBetween(bodyBuffer.begin(), bodyBuffer.end()));
 
                 if(crcBuffer.max_size() < crcSize) { return false; }
                 crcBuffer.resizeForOverwrite(crcSize);
@@ -344,16 +386,15 @@ namespace Detail {
               = static_cast<Config::Size_t>(bodyBuffer.finalizedSize() + crcSize);
 
             if constexpr(Config::usePackageStart) {
-                copyFixed<packageStartSize>(headerBuffer.data(), std::addressof(packageStart));
+                putHeaderField(headerBuffer.data(), packageStart);
             }
 
-            copyFixed<packageSizeSize>(std::next(headerBuffer.data(), packageStartSize),
-                                       std::addressof(bodySize));
+            putHeaderField(std::next(headerBuffer.data(), packageStartSize), bodySize);
 
             if constexpr(Config::useCrc && !Config::useHeaderCrc) {
                 BufferAdapter<decltype(bodyBuffer)> crcBuffer{bodyBuffer};
-                auto const                          bodyCrc = Config::Crc::calc(std::as_bytes(
-                  std::span(std::ranges::subrange(headerBuffer.begin(), bodyBuffer.end()))));
+                auto const                          bodyCrc
+                  = Config::Crc::calc(bytesBetween(headerBuffer.begin(), bodyBuffer.end()));
 
                 if(crcBuffer.max_size() < crcSize) { return false; }
                 crcBuffer.resizeForOverwrite(crcSize);
@@ -371,11 +412,10 @@ namespace Detail {
                     }
                 }
 
-                auto const headerCrc
-                  = Config::Crc::calc(std::as_bytes(std::span(std::ranges::subrange(
-                    headerBuffer.begin(),
-                    std::next(headerBuffer.begin(),
-                              packageStartSize + packageSizeSize + headerDataSize)))));
+                auto const headerCrc = Config::Crc::calc(
+                  bytesBetween(headerBuffer.begin(),
+                               std::next(headerBuffer.begin(),
+                                         packageStartSize + packageSizeSize + headerDataSize)));
 
                 if(!headerWrite<Crc_t, crcSize>(headerBuffer.asSpan().subspan(packageStartSize
                                                                               + packageSizeSize
@@ -416,11 +456,7 @@ namespace Detail {
                 if(headerSize + crcSize > span.size()) { return std::nullopt; }
 
                 if constexpr(Config::usePackageStart) {
-                    PackageStart_t readPackageStart{};
-
-                    copyFixed<packageStartSize>(std::addressof(readPackageStart), span.data());
-
-                    if(readPackageStart != packageStart) {
+                    if(headerField<PackageStart_t>(span, 0) != packageStart) {
                         skip();
                         continue;
                     }
@@ -438,11 +474,10 @@ namespace Detail {
                         continue;
                     }
 
-                    auto const calcedHeaderCrc
-                      = Config::Crc::calc(std::as_bytes(std::span(std::ranges::subrange(
-                        span.begin(),
-                        std::next(span.begin(),
-                                  packageStartSize + packageSizeSize + headerDataSize)))));
+                    auto const calcedHeaderCrc = Config::Crc::calc(
+                      bytesBetween(span.begin(),
+                                   std::next(span.begin(),
+                                             packageStartSize + packageSizeSize + headerDataSize)));
 
                     if(calcedHeaderCrc != readHeaderCrc) {
                         skip();
@@ -460,9 +495,7 @@ namespace Detail {
                     }
                 }
 
-                Size_t readBodySize{};
-                copyFixed<packageSizeSize>(std::addressof(readBodySize),
-                                           std::next(span.data(), packageStartSize));
+                Size_t const readBodySize = headerField<Size_t>(span, packageStartSize);
 
                 if(readBodySize > maxSize || readBodySize < crcSize) {
                     skip();
@@ -481,12 +514,11 @@ namespace Detail {
                         continue;
                     }
 
-                    auto const calcedBodyCrc
-                      = Config::Crc::calc(std::as_bytes(std::span(std::ranges::subrange(
-                        std::next(span.begin(), Config::useHeaderCrc ? headerSize : 0),
-                        std::next(span.begin(),
-                                  static_cast<std::make_signed_t<std::size_t>>(
-                                    (headerSize + readBodySize) - crcSize))))));
+                    auto const calcedBodyCrc = Config::Crc::calc(
+                      bytesBetween(std::next(span.begin(), Config::useHeaderCrc ? headerSize : 0),
+                                   std::next(span.begin(),
+                                             static_cast<std::make_signed_t<std::size_t>>(
+                                               (headerSize + readBodySize) - crcSize))));
                     if(calcedBodyCrc != readBodyCrc) {
                         if constexpr(Config::useHeaderData) {
                             auto const body = span.subspan(headerSize, readBodySize - crcSize);
@@ -663,8 +695,8 @@ namespace Detail {
     struct Serializer {
         template<typename T,
                  typename Buffer>
-        static bool serialize(Buffer&  buffer,
-                              T const& v) {
+        static constexpr bool serialize(Buffer&  buffer,
+                                        T const& v) {
             // A fixed-capacity buffer is written as one window over its free room and resized
             // once, instead of growing per field. On failure its size is restored.
             if constexpr(SizedOnce<Buffer>) {
@@ -697,13 +729,13 @@ namespace Detail {
             bool        ec{};
             std::size_t location{};
 
-            operator bool() const { return ec; }
+            constexpr operator bool() const { return ec; }
         };
 
         template<typename T,
                  typename Buffer>
-        static ParseError deserialize(Buffer& buffer,
-                                      T&      v) {
+        static constexpr ParseError deserialize(Buffer& buffer,
+                                                T&      v) {
             aglio::DynamicDeserializationView debuff{buffer};
 
             if(!aglio::Serializer<SizeT>::deserialize(debuff, v)) {

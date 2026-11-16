@@ -2,11 +2,14 @@
 
 #include "inline.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstring>
 #include <limits>
 #include <span>
+#include <type_traits>
+#include <utility>
 
 namespace aglio {
 template<typename Buffer>
@@ -43,8 +46,14 @@ public:
         }
     }
 
-    /// The next n bytes (n > 0) for the caller to write, or nullptr when there is no room.
-    AGLIO_INLINE constexpr std::byte* claim(std::size_t n) {
+    /// The next n bytes (n > 0) for the caller to write, or nullptr when there is no room - and
+    /// only then: bytes that are there have an address, which spares the caller's test of it.
+    /// For a std::byte buffer only: the caller writes std::byte, and a buffer of another kind of
+    /// byte takes its bytes through insert(), which converts them.
+    AGLIO_INLINE constexpr std::byte* claim(std::size_t n)
+        requires std::same_as<std::remove_cvref_t<decltype(*std::declval<Buffer&>().data())>,
+                              std::byte>
+    {
         auto const available = static_cast<std::size_t>(buffer_.size()) - position_;
         if(n > available) {
             if constexpr(requires { buffer_.resize(1); }) {
@@ -57,10 +66,11 @@ public:
                 return nullptr;
             }
         }
-        void* const at
+        auto* const at
           = std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_));
+        AGLIO_ASSUME(at != nullptr);
         position_ += n;
-        return static_cast<std::byte*>(at);
+        return at;
     }
 
     constexpr bool insert(std::span<std::byte const> data) {
@@ -79,7 +89,7 @@ public:
                 return false;
             }
         }
-        std::memcpy(
+        Detail::copyBytes(
           std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)),
           data.data(),
           data.size_bytes());
@@ -119,13 +129,15 @@ public:
           available()});
     }
 
-    /// The next n bytes (n > 0) for the caller to read, or nullptr when there are fewer.
+    /// The next n bytes (n > 0) for the caller to read, or nullptr when there are fewer - and only
+    /// then.
     AGLIO_INLINE constexpr std::byte const* claim(std::size_t n) {
         if(n > available()) { return nullptr; }
-        void const* const at
+        auto const* const at
           = std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_));
+        AGLIO_ASSUME(at != nullptr);
         position_ += n;
-        return static_cast<std::byte const*>(at);
+        return Detail::bytePointer(at);
     }
 
     /// The counterpart of the serialization view's fixed-size insert.
@@ -148,7 +160,7 @@ public:
     constexpr bool extract(std::span<std::byte> data) {
         if(data.size_bytes() == 0) { return true; }
         if(data.size_bytes() > available()) { return false; }
-        std::memcpy(
+        Detail::copyBytes(
           data.data(),
           std::next(buffer_.data(), static_cast<std::make_signed_t<std::size_t>>(position_)),
           data.size_bytes());
@@ -169,7 +181,8 @@ public:
     constexpr explicit StreamSerializationView(Stream& stream AGLIO_LIFETIMEBOUND)
       : stream_{stream} {}
 
-    constexpr bool insert(std::span<std::byte const> data) {
+    /// The bytes read as chars, which any object's bytes may be.
+    bool insert(std::span<std::byte const> data) {
         if(data.size_bytes() == 0) { return true; }
         stream_.write(reinterpret_cast<char const*>(data.data()),
                       static_cast<std::make_signed_t<std::size_t>>(data.size_bytes()));
@@ -193,13 +206,19 @@ public:
         return std::numeric_limits<std::size_t>::max();
     }
 
-    constexpr bool extract(std::span<std::byte> data) {
-        if(data.size_bytes() == 0) { return true; }
-
-        stream_.read(reinterpret_cast<char*>(data.data()),
-                     static_cast<std::make_signed_t<std::size_t>>(data.size_bytes()));
-
-        return !stream_.fail();
+    /// Into chars of its own and copied out of them: read() stores chars, and a char stored
+    /// straight into what `data` spans would be a write into an object through a view of its
+    /// bytes, which leaves undefined what the object then holds.
+    bool extract(std::span<std::byte> data) {
+        std::array<char, 256> chunk{};
+        while(!data.empty()) {
+            std::size_t const n = std::min(data.size(), chunk.size());
+            stream_.read(chunk.data(), static_cast<std::make_signed_t<std::size_t>>(n));
+            if(stream_.fail()) { return false; }
+            Detail::copyBytes(data.data(), chunk.data(), n);
+            data = data.subspan(n);
+        }
+        return true;
     }
 };
 

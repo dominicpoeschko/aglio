@@ -21,7 +21,8 @@ struct Point { int x; int y; };   // that's the whole "schema"
 - **JSON** via `to_json` / `from_json` (glaze under the hood).
 - **Text output** — `std::formatter`, an `fmt::formatter`, and a `std::ostream`
   `operator<<` for any reflected type, with **enums printed by name**.
-- Header-only, `constexpr`-friendly, works with buffers *or* iostreams.
+- Header-only, works with buffers *or* iostreams - and **in constant evaluation**: a frame built
+  by the compiler, a round trip as a `static_assert`.
 
 ## Requirements
 
@@ -128,6 +129,87 @@ static_assert(Packager::requireAlwaysFits<Telemetry>());             // the same
 
 A serializer of your own whose wire format is not the generic one for its type's shape states its
 bound as `static constexpr std::size_t maxSerializedSize`.
+
+### What goes onto the wire, and what comes off it
+
+A number or an enum is written as the bytes it has in memory (the packager asserts a little-endian
+target), a `bool` as one byte, 0 or 1. Reading is where a wire can hold anything:
+
+- A number is read through `std::bit_cast` from the bytes, not by copying bytes into it: bytes off
+  a wire never were that number, and only `std::bit_cast` says what value they make.
+- A `bool` takes any byte other than 0 for `true` - alone and as an element of an array or a
+  static vector. No `bool` ends up holding a 2.
+- **An enum needs a fixed underlying type** (`enum class E`, `enum E : std::uint8_t`). Without one
+  only the values between its enumerators are values of it, reading any other is undefined
+  behaviour (and compilers use that: `-fstrict-enums`), and a wire can hold any. Such an enum does
+  not compile:
+
+  ```
+  error: static assertion failed: aglio: give the enum an underlying type (enum E : std::uint8_t { ... })
+  ```
+
+- A floating point type with padding bytes - an x87 `long double`, ten bytes in sixteen - has no
+  wire form and does not compile either; use `double`.
+- **A duration of a minute or longer travels as a 32-bit count** when a signed integer of 32 bits
+  or more counts it in memory. `std::chrono::minutes`, `hours`, `days`, `weeks`, `months` and
+  `years` count in a type each standard library chooses - `long` for minutes and hours in libc++,
+  which is four bytes on a 32-bit microcontroller and eight on a 64-bit PC, 64 bits everywhere in
+  libstdc++ - and without this rule the two ends of a cable disagree about `std::chrono::hours`.
+  A count that does not fit 32 bits (hours past 245 000 years) makes `serialize` return `false`.
+  Every other duration travels as its own count: `nanoseconds` to `seconds` are 64 bits
+  everywhere, and a narrower, an unsigned or a floating point count is one you named.
+- What no library can do for you: a `long`, a `std::size_t`, a `wchar_t` or a pointer in a message
+  is a different number of bytes on another machine. Use the fixed-width types, and pin a
+  message's size in the header both ends compile:
+  `static_assert(aglio::serializedSizeV<Message, Size_t> == 46);`
+- A contiguous range of numbers (`std::vector<int>`, `std::string`, a static vector of
+  `std::byte`) is written with one copy of its bytes, and read with one bounds check and a
+  `std::bit_cast` per element - a loop written so that gcc and clang make the one `memcpy` of it
+  that it is (also when optimizing for size). Ranges of `bool` and of anything that is not a number
+  or enum are read element by element.
+
+Nothing in aglio copies wire bytes into an object or writes one through a view of its bytes.
+
+Use `std::byte` for the buffers. A buffer of `char` or `std::uint8_t` works at run time (its bytes
+are looked at as `std::byte`), but not in constant evaluation.
+
+### At compile time
+
+Serializing, deserializing, packing and unpacking work in constant evaluation: a frame can be built
+by the compiler, and a protocol's round trip can be a `static_assert`.
+
+```cpp
+struct Crc16 {
+    using type = std::uint16_t;
+    static constexpr type calc(std::span<std::byte const> data);   // constexpr now
+};
+// Protocol, Packager and Telemetry as above
+
+template<std::size_t N>
+constexpr std::array<std::byte, N> packed(auto const& message) {
+    std::vector<std::byte> frame;                 // or a static vector of std::byte
+    if(!Packager::pack(frame, message) || frame.size() != N) { std::unreachable(); }   // fails to compile
+    std::array<std::byte, N> bytes{};
+    std::ranges::copy(frame, bytes.begin());
+    return bytes;
+}
+
+// the frame, CRCs and all, as constant data
+inline constexpr auto hello = packed<Packager::frameOverhead + 6>(Telemetry{3.3f, 1200});
+
+static_assert([] {
+    Telemetry  out{};
+    auto       frame = std::span{hello};
+    auto const res   = Packager::unpack(frame, out);
+    return res && res->consumed == hello.size() && out.rpm == 1200;
+}());
+```
+
+What it needs: `std::byte` buffers; a `constexpr` `Crc::calc`; containers that work in constant
+evaluation (`std::vector` and `std::string` inside one evaluation, `std::array` and static vectors
+anywhere; `std::map` and `std::set` only where the standard library makes them `constexpr`); and
+message types without pointers, references or unions. The stream views are run time only. The
+bytes are those the same call writes at run time - the test suite compares the two.
 
 ### JSON
 

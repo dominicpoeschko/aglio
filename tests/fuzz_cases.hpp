@@ -43,7 +43,9 @@ using Cases = std::tuple<Case<packager::Configs::Minimal, Types::Container>,
                          // deque, list, set<string> and array<string> each take their own path
                          // through the range serializer.
                          Case<packager::Configs::SimpleCrc, Types::MoreContainers>,
-                         Case<packager::Configs::Full, Types::NestedWrappers>>;
+                         Case<packager::Configs::Full, Types::NestedWrappers>,
+                         // contiguous ranges of bool: a wire byte that is neither 0 nor 1
+                         Case<packager::Configs::SimpleCrc, Types::BoolRanges>>;
 
 inline constexpr std::size_t caseCount{std::tuple_size_v<Cases>};
 
