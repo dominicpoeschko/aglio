@@ -253,17 +253,17 @@ jobs:
                 run-clang-tidy -p build-consumer -quiet -warnings-as-errors='*'
                 "$PWD/tests/install/main\.cpp$"
 
-    release:
-        if: github.event_name == 'workflow_dispatch'
-        needs: [build-and-test, fuzz, remote-fmt, install]
+    # Does this master commit carry a version that has no tag yet? Only then does the run offer a release, so a push
+    # that did not bump project(aglio VERSION ...) finishes green with release skipped instead of waiting for review.
+    release-check:
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
         runs-on: ubuntu-latest
-        permissions:
-            contents: write
+        outputs:
+            tag: ${{ steps.version.outputs.tag }}
+            new: ${{ steps.version.outputs.new }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v7
-              with:
-                fetch-depth: 0
 
             - name: Read version from CMakeLists.txt
               id: version
@@ -272,24 +272,52 @@ jobs:
                 if [ -z "$version" ]; then
                   echo "::error::Could not parse version from CMakeLists.txt"; exit 1
                 fi
-                echo "tag=v$version" >> "$GITHUB_OUTPUT"
+                tag="v$version"
+                echo "tag=$tag" >> "$GITHUB_OUTPUT"
+                if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+                  echo "new=false" >> "$GITHUB_OUTPUT"
+                  echo "$tag is already released: no release offered"
+                else
+                  echo "new=true" >> "$GITHUB_OUTPUT"
+                  echo "$tag is not released yet: release waits for approval once the tests pass"
+                fi
 
+    # Releases the commit this run tested, without a second run: the environment 'release' has a required reviewer
+    # (repository Settings -> Environments), so the job waits in this run until it is approved under "Review
+    # deployments"; rejecting it, or leaving it, releases nothing.
+    release:
+        if: needs.release-check.outputs.new == 'true'
+        needs: [release-check, build-and-test, fuzz, remote-fmt, install]
+        runs-on: ubuntu-latest
+        environment: release
+        permissions:
+            contents: write
+        env:
+            TAG: ${{ needs.release-check.outputs.tag }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
+              with:
+                ref: ${{ github.sha }}
+                fetch-depth: 0
+
+            # Another run of the same version may have been approved while this one waited.
             - name: Fail if tag already exists
               run: |
-                tag="${{ steps.version.outputs.tag }}"
+                tag="$TAG"
                 if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
                   echo "::error::Tag $tag already exists"; exit 1
                 fi
 
             - name: Create and push tag
               run: |
-                tag="${{ steps.version.outputs.tag }}"
+                tag="$TAG"
                 git tag "$tag"
                 git push origin "$tag"
 
             - name: Generate release notes from commits
               run: |
-                tag="${{ steps.version.outputs.tag }}"
+                tag="$TAG"
                 prev_tag=$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)
                 if [ -n "$prev_tag" ]; then
                   range="${prev_tag}..${tag}"
@@ -311,5 +339,5 @@ jobs:
               env:
                 GH_TOKEN: ${{ github.token }}
               run: |
-                tag="${{ steps.version.outputs.tag }}"
+                tag="$TAG"
                 gh release create "$tag" --title "$tag" --notes-file release-notes.md
