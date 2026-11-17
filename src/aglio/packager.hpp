@@ -550,6 +550,10 @@ namespace Detail {
             std::size_t consumed;
         };
 
+        /// parseFailure: `consumed` ends behind the frame that failed. needMoreData: `consumed` bytes
+        /// lie before the first place a frame can still start - a header waiting for its body, or a
+        /// tail too short to judge - and none of them can begin one; a caller may drop them, and one
+        /// that keeps them has them searched again on every call.
         struct UnpackError : HeaderDataBase {
             UnpackErrorKind kind{UnpackErrorKind::needMoreData};
             std::size_t     consumed{0};
@@ -616,7 +620,12 @@ namespace Detail {
 
             while(true) {
                 auto result = findValidPackage(span);
-                if(!result) { return std::unexpected(UnpackError{}); }
+                if(!result) {
+                    // the search stopped where a frame can still start
+                    UnpackError err;
+                    err.consumed = buffer.size() - span.size();
+                    return std::unexpected(err);
+                }
 
                 auto const consumed = buffer.size() - span.size();
 
@@ -659,6 +668,7 @@ namespace Detail {
             std::span<std::byte const> body;
         };
 
+        /// `consumed` as in UnpackError.
         struct ValidateError : HeaderDataBase {
             UnpackErrorKind kind{UnpackErrorKind::needMoreData};
             std::size_t     consumed{0};
@@ -671,7 +681,11 @@ namespace Detail {
         static constexpr ValidateReturn_t validate(Buffer& buffer) {
             std::span span{buffer};
             auto      result = findValidPackage(span);
-            if(!result) { return std::unexpected(ValidateError{}); }
+            if(!result) {
+                ValidateError err;
+                err.consumed = buffer.size() - span.size();
+                return std::unexpected(err);
+            }
 
             auto const consumed = buffer.size() - span.size();
 

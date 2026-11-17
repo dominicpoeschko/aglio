@@ -194,7 +194,8 @@ void run(std::span<std::byte const> wire,
         // Never more bytes than were offered.
         if(consumed > span.size()) { std::abort(); }
 
-        // needMoreData: nothing accepted, so re-running the same bytes would loop.
+        // needMoreData with nothing to drop: re-running the same bytes would loop. With bytes to drop
+        // (no frame can start in them) the rest is searched again, as a caller that drops them does.
         if(consumed == 0) { break; }
 
         if(result) {

@@ -555,6 +555,94 @@ TEST_CASE("HeaderData: body corruption returns partial result with header_data",
     CHECK(result.error().consumed == buffer.size());
 }
 
+TEST_CASE("needMoreData: consumed ends where a frame can still start",
+          "[packager][headerinfo]") {
+    using Packager = aglio::Packager<Test::packager::Configs::WithHeaderData>;
+
+    std::vector<std::byte> frame{};
+    int const              valueIn = 1234;
+    REQUIRE(Packager::pack(frame, valueIn, std::uint8_t{3}));
+    auto const half = static_cast<std::ptrdiff_t>(frame.size() / 2);
+
+    // garbage without the start marker's first byte, then half a frame: the garbage is consumed
+    std::vector<std::byte> buffer(7, std::byte{0x11});
+    buffer.insert(buffer.end(), frame.begin(), frame.begin() + half);
+    int  valueOut = 0;
+    auto partial  = Packager::unpack(buffer, valueOut);
+    REQUIRE(!partial.has_value());
+    CHECK(partial.error().kind == aglio::UnpackErrorKind::needMoreData);
+    CHECK(partial.error().consumed == 7);
+
+    // dropped, and the rest arrives: the frame decodes from the front
+    buffer.erase(buffer.begin(), buffer.begin() + 7);
+    buffer.insert(buffer.end(), frame.begin() + half, frame.end());
+    auto const whole = Packager::unpack(buffer, valueOut);
+    REQUIRE(whole.has_value());
+    CHECK(whole->consumed == buffer.size());
+    CHECK(valueOut == valueIn);
+
+    // garbage alone is consumed whole; a tail too short to judge is kept from its marker byte on
+    std::vector<std::byte> noise(32, std::byte{0x11});
+    auto const             all = Packager::unpack(noise, valueOut);
+    REQUIRE(!all.has_value());
+    CHECK(all.error().consumed == noise.size());
+    noise.push_back(std::byte{0xCD});
+    auto const tail = Packager::unpack(noise, valueOut);
+    REQUIRE(!tail.has_value());
+    CHECK(tail.error().consumed == noise.size() - 1);
+    auto const validated = Packager::validate(noise);
+    REQUIRE(!validated.has_value());
+    CHECK(validated.error().consumed == noise.size() - 1);
+}
+
+TEST_CASE("needMoreData: start markers without a frame are consumed",
+          "[packager]") {
+    using Packager = aglio::Packager<Test::packager::Configs::Full>;
+
+    std::vector<std::byte> frame{};
+    int const              valueIn = 4321;
+    REQUIRE(Packager::pack(frame, valueIn));
+
+    // marker pairs whose header CRC never holds, then a frame short of its last byte: every pair is dropped, the
+    // frame start kept (cut to half, the last pairs and it would be a tail too short to judge, and kept)
+    std::vector<std::byte> buffer{};
+    for(int i = 0; i != 64; ++i) {
+        buffer.push_back(frame[0]);
+        buffer.push_back(frame[1]);
+    }
+    std::size_t const garbage = buffer.size();
+    buffer.insert(buffer.end(), frame.begin(), frame.end() - 1);
+    int  valueOut = 0;
+    auto partial  = Packager::unpack(buffer, valueOut);
+    REQUIRE(!partial.has_value());
+    CHECK(partial.error().kind == aglio::UnpackErrorKind::needMoreData);
+    CHECK(partial.error().consumed == garbage);
+
+    // a whole frame whose body is no int is skipped inside unpack: it is consumed with the garbage before it
+    std::vector<std::byte> wrong{};
+    REQUIRE(Packager::pack(wrong, std::uint64_t{7}));
+    std::vector<std::byte> mixed(5, std::byte{0x11});
+    mixed.insert(mixed.end(), wrong.begin(), wrong.end());
+    mixed.insert(mixed.end(), frame.begin(), frame.end() - 1);
+    auto const skipped = Packager::unpack(mixed, valueOut);
+    REQUIRE(!skipped.has_value());
+    CHECK(skipped.error().kind == aglio::UnpackErrorKind::needMoreData);
+    CHECK(skipped.error().consumed == 5 + wrong.size());
+}
+
+TEST_CASE("needMoreData without a start marker: only a tail too short to judge is kept",
+          "[packager]") {
+    using Packager = aglio::Packager<Test::packager::Configs::SimpleCrc>;
+
+    // every position is a candidate: all but the last frameOverhead - 1 bytes are ruled out one by one
+    std::vector<std::byte> noise(32, std::byte{0x11});
+    int                    valueOut = 0;
+    auto const             result   = Packager::unpack(noise, valueOut);
+    REQUIRE(!result.has_value());
+    CHECK(result.error().kind == aglio::UnpackErrorKind::needMoreData);
+    CHECK(result.error().consumed == noise.size() - (Packager::frameOverhead - 1));
+}
+
 TEST_CASE("HeaderData: existing configs still return optional<size_t>",
           "[packager][headerinfo]") {
     using Packager = aglio::Packager<Test::packager::Configs::Full>;
